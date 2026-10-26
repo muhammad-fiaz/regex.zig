@@ -1,0 +1,44 @@
+name: Documentation Issue
+description: Report incorrect, outdated, or missing documentation in regex.zig
+labels: ['documentation']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve the regex.zig documentation!
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Issue Description
+      description: What is wrong or missing in the documentation?
+    validations:
+      required: true
+
+  - type: input
+    id: page
+    attributes:
+      label: Documentation Page
+      description: Which page or section has the issue?
+      placeholder: "guide/getting-started.md"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: type
+    attributes:
+      label: Issue Type
+      options:
+        - Incorrect information
+        - Missing syntax/API documentation
+        - Outdated example or signature
+        - Broken link or formatting
+        - Typo
+    validations:
+      required: true
+
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested Fix
+      description: If you know how to fix it, describe the suggested correction

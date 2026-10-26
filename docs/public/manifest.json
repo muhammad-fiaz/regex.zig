@@ -1,0 +1,18 @@
+{
+  "name": "regex.zig Documentation",
+  "short_name": "regex.zig",
+  "description": "High-performance, linear-time regular expressions for Zig 0.17.0 with non-backtracking PikeVM engine.",
+  "start_url": "/regex.zig/",
+  "scope": "/regex.zig/",
+  "display": "standalone",
+  "background_color": "#1e1e2e",
+  "theme_color": "#f7a41d",
+  "icons": [
+    {
+      "src": "/regex.zig/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

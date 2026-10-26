@@ -1,0 +1,129 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, dev]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  ZIG_VERSION: 0.17.0
+
+jobs:
+  verify:
+    name: Lint, Test, Examples, Benchmarks & Docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+      - name: Check code formatting
+        run: zig fmt --check src/ examples/ bench/
+      - name: Run unit & integration tests
+        run: zig build test --summary all
+      - name: Run all examples
+        run: zig build run-all-examples
+      - name: Run benchmark harness
+        run: zig build bench
+      - name: Emit native Zig documentation
+        run: zig build docs
+
+  test-linux:
+    name: Linux (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86_64-linux,     target: x86_64-linux-gnu,      optimize: Debug,       qemu: false }
+          - { name: aarch64-linux,    target: aarch64-linux-musl,    optimize: Debug,       qemu: true }
+          - { name: x86-linux,        target: x86-linux-musl,        optimize: Debug,       qemu: true }
+          - { name: arm-linux,        target: arm-linux-musleabihf,  optimize: Debug,       qemu: true }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ${{ matrix.target }}-${{ matrix.optimize }}
+      - name: Install QEMU
+        if: matrix.qemu
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends qemu-user
+          qemu-arm --version
+          qemu-aarch64 --version
+      - name: Run tests with QEMU
+        run: >-
+          zig build test
+          -Dtarget=${{ matrix.target }}
+          -Doptimize=${{ matrix.optimize }}
+          ${{ matrix.qemu && '-fqemu' || '' }} --summary all
+
+  test-windows:
+    name: Windows (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: x86_64-windows, target: x86_64-windows, os: windows-latest }
+          - { name: x86-windows,    target: x86-windows,    os: windows-latest }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ${{ matrix.target }}
+      - name: Run Windows tests
+        run: zig build test -Dtarget=${{ matrix.target }} --summary all
+
+  test-macos:
+    name: macOS (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: aarch64-macos, target: aarch64-macos, os: macos-latest }
+          - { name: x86_64-macos, target: x86_64-macos, os: macos-15-intel }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ${{ matrix.target }}
+      - name: Run macOS tests
+        run: zig build test -Dtarget=${{ matrix.target }} --summary all
+
+  cross-compile-matrix:
+    name: Cross-compile (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { target: aarch64-windows }
+          - { target: arm-linux-gnueabihf }
+          - { target: riscv64-linux-musl }
+          - { target: wasm32-freestanding }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: ${{ env.ZIG_VERSION }}
+          cache-key: ${{ matrix.target }}
+      - name: Cross-compile library
+        run: zig build -Dtarget=${{ matrix.target }}

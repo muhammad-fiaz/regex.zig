@@ -1,0 +1,84 @@
+name: Bug Report
+description: Report a bug or defect in regex.zig
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug in regex.zig! Please provide details below.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: A clear description of the bug or unexpected matching behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: pattern
+    attributes:
+      label: Pattern & Input
+      description: Provide the regular expression pattern and the input string
+      placeholder: |
+        Pattern: "^[a-z]+$"
+        Input: "hello"
+        Options: .{}
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Minimal Reproduction Code
+      description: Minimal Zig code snippet reproducing the problem
+      placeholder: |
+        const re = try regex.compile(allocator, "...", .{});
+        defer re.deinit();
+        _ = re.isMatch("...", .{});
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What you expected to happen
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: What actually happened (e.g., error returned, unexpected false/true, panic)
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: regex.zig Version
+      placeholder: "0.0.1"
+    validations:
+      required: true
+
+  - type: input
+    id: zig-version
+    attributes:
+      label: Zig Version
+      placeholder: "0.17.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - Windows
+        - Linux
+        - macOS
+        - Other
+    validations:
+      required: true

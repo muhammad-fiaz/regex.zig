@@ -1,0 +1,38 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="100%" height="100%">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#1E1E2E;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#11111B;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="accentGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#F7A41D;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#FF6B4A;stop-opacity:1" />
+    </linearGradient>
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="4" result="blur" />
+      <feComposite in="SourceGraphic" in2="blur" operator="over" />
+    </filter>
+  </defs>
+  <!-- Background rounded card -->
+  <rect width="128" height="128" rx="28" fill="url(#bgGrad)" stroke="#313244" stroke-width="2"/>
+
+  <!-- Subtle border highlight -->
+  <rect x="2" y="2" width="124" height="124" rx="26" fill="none" stroke="url(#accentGrad)" stroke-width="1.5" stroke-opacity="0.4"/>
+
+  <!-- Regex pattern glyphs: /.* / -->
+  <!-- Left slash / -->
+  <line x1="28" y1="84" x2="42" y2="44" stroke="#A6ADC8" stroke-width="6" stroke-linecap="round" />
+
+  <!-- Dot . -->
+  <circle cx="56" cy="74" r="6" fill="url(#accentGrad)" filter="url(#glow)"/>
+
+  <!-- Star * -->
+  <g transform="translate(80, 60)" stroke="url(#accentGrad)" stroke-width="6" stroke-linecap="round">
+    <line x1="0" y1="-16" x2="0" y2="16" />
+    <line x1="-14" y1="-8" x2="14" y2="8" />
+    <line x1="-14" y1="8" x2="14" y2="-8" />
+  </g>
+
+  <!-- Right slash / -->
+  <line x1="98" y1="84" x2="112" y2="44" stroke="#A6ADC8" stroke-width="6" stroke-linecap="round" />
+</svg>
