@@ -34,11 +34,7 @@
 ## Why regex.zig
 
 > [!IMPORTANT]
-> `regex.zig` delivers an industrial-strength, production-ready, blazing-fast regular expression engine engineered specifically for high-throughput, mission-critical systems in Zig. While traditional recursive backtracking regex engines from other language ecosystems suffer from catastrophic backtracking and algorithmic denial-of-service ($O(2^N)$ exponential worst-case time), `regex.zig` executes an optimized Thompson Non-Deterministic Finite Automaton using a non-backtracking Virtual Machine (PikeVM).
->
-> It mathematically guarantees strict $O(M \times N)$ linear-time execution under all circumstances, ensuring absolute immunity against ReDoS attacks without sacrificing expressive power or submatch captures.
->
-> Built natively from scratch with zero external dependencies and zero C/libc requirements, `regex.zig` pairs raw throughput—SIMD literal prefilters exceeding 2.8 GB/s and sub-microsecond matching—with complete feature support: 32 inline submatch capture slots, Perl-compatible named groups `(?P<name>...)`, full UTF-8 decoding, multi-byte Unicode case-folding, template replacement, string splitting, streaming progression iterators that safely advance past zero-length matches, and configurable safety limits. Every public API adheres strictly to an explicit, uniform inline `.{}` options architecture with zero hidden runtime allocations.
+> `regex.zig` is a native Zig regular expression engine designed for speed, safety, and predictability. Powered by a non-backtracking PikeVM, it guarantees strict $O(M \times N)$ linear-time execution with complete immunity against ReDoS attacks. It requires zero C or libc dependencies, featuring SIMD literal prefilters, 32 inline capture slots, named groups `(?P<name>...)`, full UTF-8 support, streaming iterators, and an explicit inline `.{}` options API with zero hidden allocations.
 
 **Related Zig projects:**
 
