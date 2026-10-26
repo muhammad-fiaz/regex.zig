@@ -62,7 +62,6 @@ pub fn build(b: *std.Build) void {
                 .imports = &.{.{ .name = "regex", .module = mod }},
             }),
         });
-        b.installArtifact(exe);
         const run = b.addRunArtifact(exe);
         example_step.dependOn(&run.step);
 

@@ -62,7 +62,7 @@ pub fn main() !void {
 
 ## 2. Server Log Scanning (`examples/search.zig`)
 
-Demonstrates batch match extraction with `re.findAll` and pattern scanning across multiline strings to extract log tags and IP addresses:
+Demonstrates match counting without allocations, batch match extraction with `re.findAll`, and extracting byte coordinate index positions (`m.start`, `m.end`) to directly slice the source string:
 
 ```zig
 const std = @import("std");
@@ -79,18 +79,27 @@ pub fn main() !void {
     var tag_regex = try regex.compile(allocator, "\\[(INFO|WARN|ERROR)\\]", .{});
     defer tag_regex.deinit();
 
+    // 1. Counting matches without allocating memory
+    const count_all = tag_regex.count(log_data, .{});
+    const count_first_two = tag_regex.count(log_data, .{ .maxMatches = 2 });
+    std.debug.print("Total tags: {} (limit 2: {})\n", .{ count_all, count_first_two });
+
+    // 2. Extracting matches with start and end byte index positions
     const matches = try tag_regex.findAll(allocator, log_data, .{});
     defer allocator.free(matches);
 
     for (matches, 0..) |m, i| {
-        std.debug.print("Tag [{}]: '{s}' at bytes {}..{}\n", .{ i + 1, m.slice, m.start, m.end });
+        std.debug.print("Tag [{}]: '{s}' at byte offset {}..{}\n", .{ i + 1, m.slice, m.start, m.end });
     }
 
+    // 3. Search for IP address and slice directly using byte positions
     var ip_regex = try regex.compile(allocator, "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b", .{});
     defer ip_regex.deinit();
 
     if (ip_regex.find(log_data, .{})) |ip| {
-        std.debug.print("Peer IP: {s} at offset {}\n", .{ ip.slice, ip.start });
+        std.debug.print("Peer IP: {s} at byte index [{}..{}]\n", .{ ip.slice, ip.start, ip.end });
+        const sliced = log_data[ip.start..ip.end];
+        std.debug.print("Direct slice verified: {}\n", .{std.mem.eql(u8, ip.slice, sliced)});
     }
 }
 ```
@@ -99,7 +108,7 @@ pub fn main() !void {
 
 ## 3. URL Parsing & Named Captures (`examples/captures.zig`)
 
-Demonstrates extracting submatch groups using named syntax `(?P<name>...)` and positional capture indexes:
+Demonstrates extracting submatch groups using named syntax `(?P<name>...)`, positional capture indexes, and group index spans (`caps.bounds()`, `caps.getSpan()`, `caps.nameSpan()`):
 
 ```zig
 const std = @import("std");
@@ -119,6 +128,14 @@ pub fn main() !void {
         std.debug.print("  Host:   {s}\n", .{caps.name("host") orelse "none"});
         std.debug.print("  Port:   {s}\n", .{caps.name("port") orelse "default (443)"});
         std.debug.print("  Path:   {s}\n", .{caps.name("path") orelse "/"});
+
+        // Group byte range positions
+        const full_range = caps.bounds();
+        std.debug.print("Match byte range: [{}..{}]\n", .{ full_range.start, full_range.end });
+
+        if (caps.nameSpan("host")) |host_span| {
+            std.debug.print("Host byte range:  [{}..{}]\n", .{ host_span.start, host_span.end });
+        }
     }
 }
 ```
@@ -282,7 +299,7 @@ pub fn main() !void {
 
 ## 9. Unicode & Japanese Text (`examples/unicode.zig`)
 
-Demonstrates UTF-8 multi-byte decoding on Japanese Hiragana, currency symbols, and Latin-1 accented characters (`café` on `CAFÉ`):
+Demonstrates UTF-8 multi-byte decoding on Japanese text, currency symbols (`$`, `€`, `£`, `¥`), and Latin-1 accented characters (`café` on `CAFÉ`):
 
 ```zig
 const std = @import("std");
@@ -291,16 +308,20 @@ const regex = @import("regex");
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    // Japanese Hiragana range
+    // 1. Japanese multi-byte UTF-8 matching
     const japanese = "Language: 日本語 (にほんご) and English";
-    var hiragana_re = try regex.compile(allocator, "[\\u{3040}-\\u{309F}]+", .{});
-    defer hiragana_re.deinit();
+    var jp_re = try regex.compile(allocator, "にほんご", .{});
+    defer jp_re.deinit();
 
-    if (hiragana_re.find(japanese, .{})) |m| {
-        std.debug.print("Hiragana: '{s}' at {}..{}\n", .{ m.slice, m.start, m.end });
+    if (jp_re.find(japanese, .{})) |m| {
+        std.debug.print("Japanese: '{s}' at {}..{}\n", .{ m.slice, m.start, m.end });
     }
 
-    // Unicode case-folding
+    // 2. Multi-byte currency symbols
+    var currency_re = try regex.compile(allocator, "(\\$|€|£|¥)[0-9]+", .{});
+    defer currency_re.deinit();
+
+    // 3. Unicode case-folding
     var accented_re = try regex.compile(allocator, "café", .{
         .caseInsensitive = true,
     });

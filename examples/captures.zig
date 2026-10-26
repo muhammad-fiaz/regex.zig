@@ -23,5 +23,24 @@ pub fn main() !void {
         std.debug.print("  Group 2 (host):   {s}\n", .{caps.get(2) orelse ""});
         std.debug.print("  Group 3 (port):   {s}\n", .{caps.get(3) orelse "unmatched"});
         std.debug.print("  Group 4 (path):   {s}\n", .{caps.get(4) orelse ""});
+
+        // Exact byte index positions of the entire match and submatches
+        const full_bounds = caps.bounds();
+        std.debug.print("Match byte range: [{}..{}]\n", .{ full_bounds.start, full_bounds.end });
+
+        if (caps.nameSpan("host")) |host_span| {
+            std.debug.print("Host byte range:  [{}..{}] ('{s}')\n", .{
+                host_span.start,
+                host_span.end,
+                target_url[host_span.start..host_span.end],
+            });
+        }
+        if (caps.getSpan(1)) |scheme_span| {
+            std.debug.print("Scheme byte range:[{}..{}] ('{s}')\n", .{
+                scheme_span.start,
+                scheme_span.end,
+                target_url[scheme_span.start..scheme_span.end],
+            });
+        }
     }
 }

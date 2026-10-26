@@ -1,24 +1,31 @@
 const std = @import("std");
+const builtin = @import("builtin");
 const regex = @import("regex");
 
+// Configure Windows console code page to UTF-8 (CP 65001) for proper Unicode glyph rendering
+extern "kernel32" fn SetConsoleOutputCP(wCodePageID: std.os.windows.UINT) callconv(.winapi) std.os.windows.BOOL;
+
 pub fn main() !void {
+    if (builtin.os.tag == .windows) {
+        _ = SetConsoleOutputCP(65001);
+    }
     const allocator = std.heap.page_allocator;
 
-    // 1. Matching Japanese Hiragana text: range [\u{3040}-\u{309F}]
+    // 1. Matching Japanese multi-byte UTF-8 text
     const japanese_text = "Language: 日本語 (にほんご) and English";
-    var hiragana_re = try regex.compile(allocator, "[\\u{3040}-\\u{309F}]+", .{});
-    defer hiragana_re.deinit();
+    var jp_re = try regex.compile(allocator, "にほんご", .{});
+    defer jp_re.deinit();
 
-    if (hiragana_re.find(japanese_text, .{})) |m| {
-        std.debug.print("Found Hiragana match: '{s}' at byte offset {}..{}\n", .{
+    if (jp_re.find(japanese_text, .{})) |m| {
+        std.debug.print("Found Japanese match: '{s}' at byte offset {}..{}\n", .{
             m.slice,
             m.start,
             m.end,
         });
     }
 
-    // 2. Unicode currency symbols
-    var currency_re = try regex.compile(allocator, "[$€£¥][0-9]+", .{});
+    // 2. Unicode currency symbols via multi-byte UTF-8 alternation (\$|€|£|¥)
+    var currency_re = try regex.compile(allocator, "(\\$|€|£|¥)[0-9]+", .{});
     defer currency_re.deinit();
 
     const price_list = "Prices: $10, €25, £40, ¥3000";

@@ -14,6 +14,12 @@ pub fn main() !void {
     var tag_regex = try regex.compile(allocator, "\\[(INFO|WARN|ERROR)\\]", .{});
     defer tag_regex.deinit();
 
+    // 1. Count occurrences without allocating heap memory
+    const total_tags = tag_regex.count(log_data, .{});
+    const first_two_tags = tag_regex.count(log_data, .{ .maxMatches = 2 });
+    std.debug.print("Counted severity tags: {} (limit 2: {})\n", .{ total_tags, first_two_tags });
+
+    // 2. Extract matches with start and end byte index positions
     const matches = try tag_regex.findAll(allocator, log_data, .{});
     defer allocator.free(matches);
 
@@ -27,14 +33,21 @@ pub fn main() !void {
         });
     }
 
-    // Search for IP address in the log
+    // 3. Search for IP address and verify byte indices by slicing source directly
     var ip_regex = try regex.compile(allocator, "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b", .{});
     defer ip_regex.deinit();
 
     if (ip_regex.find(log_data, .{})) |ip_match| {
-        std.debug.print("Detected peer IP: {s} (offset: {})\n", .{
+        std.debug.print("Detected peer IP: {s} at byte index [{}..{}]\n", .{
             ip_match.slice,
             ip_match.start,
+            ip_match.end,
+        });
+        // Direct source slicing using returned index positions
+        const sliced = log_data[ip_match.start..ip_match.end];
+        std.debug.print("Direct slice from indices: '{s}' (verified: {})\n", .{
+            sliced,
+            std.mem.eql(u8, ip_match.slice, sliced),
         });
     }
 }

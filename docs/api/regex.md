@@ -187,3 +187,53 @@ pub fn capturesIterator(self: *Regex, input: []const u8, options: IterateOptions
 ```
 
 Returns streaming forward iterators that safely advance past zero-length matches.
+
+---
+
+## Result Types
+
+### `Match`
+
+Represents a single matched substring with its exact start and end byte offsets in the input:
+
+```zig
+pub const Match = struct {
+    start: usize,
+    end: usize,
+    slice: []const u8,
+
+    pub fn len(self: Match) usize;
+    pub fn isEmpty(self: Match) bool;
+    pub fn span(self: Match) Span;
+};
+```
+
+### `Span`
+
+Byte coordinate bounds `[start, end)` representing a match or capture region:
+
+```zig
+pub const Span = struct {
+    start: usize,
+    end: usize,
+
+    pub fn len(self: Span) usize;
+    pub fn isEmpty(self: Span) bool;
+};
+```
+
+### `Captures`
+
+Provides zero-allocation access to full match and submatch group slices and byte indices:
+
+```zig
+pub const Captures = struct {
+    pub fn slice(self: Captures) []const u8;
+    pub fn bounds(self: Captures) Span;
+    pub fn get(self: Captures, index: usize) ?[]const u8;
+    pub fn getSpan(self: Captures, index: usize) ?Span;
+    pub fn name(self: Captures, group_name: []const u8) ?[]const u8;
+    pub fn nameSpan(self: Captures, group_name: []const u8) ?Span;
+    pub fn count(self: Captures) usize;
+};
+```
