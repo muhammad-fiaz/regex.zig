@@ -24,7 +24,7 @@ export default defineConfig({
   titleTemplate: ":title | Regex.zig",
   description: SITE_DESCRIPTION,
   lastUpdated: true,
-  cleanUrls: true,
+  cleanUrls: false,
   base: "/regex.zig/",
 
   sitemap: {

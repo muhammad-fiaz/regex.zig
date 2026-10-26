@@ -4,7 +4,6 @@ title: A Blazing-Fast, Native Regular Expression Engine for Zig | regex.zig
 titleTemplate: false
 description: Industrial-strength regular expression engine for Zig 0.17.0 delivering guaranteed linear-time PikeVM NFA execution, submatch extraction, UTF-8 case folding, and algorithmic ReDoS immunity without libc or external dependencies.
 keywords: zig, regex, regular expressions, pikevm, nfa, linear time, redos, unicode, captures
----
 hero:
   name: regex.zig
   text: A Blazing-Fast, Native Regular Expression Engine for Zig

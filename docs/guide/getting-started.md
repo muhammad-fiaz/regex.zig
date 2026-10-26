@@ -27,7 +27,7 @@ Add `regex.zig` to your project's `build.zig.zon`:
     .version = "0.1.0",
     .dependencies = .{
         .regex = .{
-            .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/v0.0.1.tar.gz",
+            .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz",
             .hash = "...", // run zig build to obtain the exact package hash
         },
     },

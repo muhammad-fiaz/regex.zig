@@ -141,10 +141,10 @@ zig build -Dtarget=x86-windows
 
 ### Method 1: Zig Fetch (Recommended)
 
-**Latest Release (v0.0.1)**
+**Latest Release (0.0.1)**
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/v0.0.1.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz
 ```
 
 ### Method 2: Zig Fetch (Latest Development Build)
@@ -160,7 +160,7 @@ zig fetch --save git+https://github.com/muhammad-fiaz/regex.zig.git
 ```zig
 .dependencies = .{
     .regex = .{
-        .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/v0.0.1.tar.gz",
+        .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz",
         .hash = "...", // Run `zig fetch --save <url>` to generate the hash.
     },
 },

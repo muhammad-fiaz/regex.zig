@@ -12,12 +12,12 @@ keywords: zig, regex, installation, zig fetch, build.zig.zon, package manager, c
 
 ## Method 1: Zig Fetch (Recommended)
 
-### Latest Release (v0.0.1)
+### Latest Release (0.0.1)
 
 Run the following command in your project directory:
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/v0.0.1.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz
 ```
 
 This downloads the archive and automatically writes the dependency entry and cryptographic package hash into your `build.zig.zon`.
@@ -45,7 +45,7 @@ You can also manually declare the dependency in your project's `build.zig.zon`:
     .fingerprint = 0xa5b80453d7cc01f1,
     .dependencies = .{
         .regex = .{
-            .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/v0.0.1.tar.gz",
+            .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz",
             .hash = "...", // Run `zig build` or `zig fetch --save <url>` to compute the hash
         },
     },
