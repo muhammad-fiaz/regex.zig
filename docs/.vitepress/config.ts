@@ -14,6 +14,9 @@ export const GTM_ID = "GTM-P4M9T8ZR";
 // Google AdSense Client ID
 export const ADSENSE_CLIENT_ID = "ca-pub-2040560600290490";
 
+// Microsoft Clarity Project ID
+export const CLARITY_ID = "z5vdzih779";
+
 // SEO Keywords
 export const KEYWORDS =
   "zig, regex, regular-expressions, pikevm, nfa, linear-time, redos-defense, unicode, captures, pattern-matching, replace, split, cross-platform, windows, linux, macos, aarch64, x86, x86_64, arm, zig-0.17";
@@ -53,8 +56,7 @@ export default defineConfig({
     // Favicons
     ["link", { rel: "icon", type: "image/svg+xml", href: "/regex.zig/favicon.svg" }],
 
-    // Canonical Link
-    ["link", { rel: "canonical", href: SITE_URL }],
+    // Canonical Link is emitted per page in transformPageData below.
 
     // Open Graph
     ["meta", { property: "og:type", content: "website" }],
@@ -92,18 +94,13 @@ gtag('js', new Date());
 gtag('config', '${GA_ID}');`,
     ],
 
-    // Google Tag Manager
+    // Google Tag Manager (noscript fallback is injected after <body> in transformHtml)
     ...(GTM_ID
       ? ([
           [
             "script",
             {},
             `(function(w,d,s,l,i){w[l]=w[l]||[];w[l].push({'gtm.start': new Date().getTime(),event:'gtm.js'});var f=d.getElementsByTagName(s)[0], j=d.createElement(s), dl=l!='dataLayer'?'&l='+l:''; j.async=true; j.src='https://www.googletagmanager.com/gtm.js?id='+i+dl; f.parentNode.insertBefore(j,f);})(window,document,'script','dataLayer','${GTM_ID}');`,
-          ],
-          [
-            "noscript",
-            {},
-            `<iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe>`,
           ],
         ] as [string, Record<string, string>, string][])
       : []),
@@ -117,25 +114,52 @@ gtag('config', '${GA_ID}');`,
         crossorigin: "anonymous",
       },
     ],
+
+    // Microsoft Clarity
+    ...(CLARITY_ID
+      ? ([
+          [
+            "script",
+            {},
+            `(function(c,l,a,r,i,t,y){
+              c[a]=c[a]||function(){(c[a].q=c[a].q||[]).push(arguments)};
+              t=l.createElement(r);t.async=1;t.src="https://www.clarity.ms/tag/"+i;
+              y=l.getElementsByTagName(r)[0];y.parentNode.insertBefore(t,y);
+            })(window, document, "clarity", "script", "${CLARITY_ID}");`,
+          ],
+        ] as [string, Record<string, string>, string][])
+      : []),
   ],
+
+  transformHtml(html) {
+    if (!GTM_ID) return html;
+    const noscript = `<noscript><iframe src="https://www.googletagmanager.com/ns.html?id=${GTM_ID}" height="0" width="0" style="display:none;visibility:hidden"></iframe></noscript>`;
+    return html.replace(/<body([^>]*)>/, `<body$1>\n    ${noscript}`);
+  },
 
   ignoreDeadLinks: [/.*\.zig$/],
 
   transformPageData(pageData: any) {
     const pageTitle = pageData.title || SITE_NAME;
     const pageDescription = pageData.description || SITE_DESCRIPTION;
-    const normalizedPath = pageData.relativePath
-      .replace(/\.md$/, "")
-      .replace(/(^|\/)index$/, "$1")
-      .replace(/\/$/, "");
-    const canonicalUrl =
-      normalizedPath.length > 0 ? `${SITE_URL}/${normalizedPath}` : `${SITE_URL}/`;
+    // Resolve the published URL. cleanUrls is disabled, so regular pages end
+    // in `.html` while directory index pages keep their trailing slash.
+    const cleanPath = pageData.relativePath.replace(/\.md$/, "");
+    let canonicalUrl: string;
+    if (cleanPath === "index") {
+      canonicalUrl = `${SITE_URL}/`;
+    } else if (cleanPath.endsWith("/index")) {
+      canonicalUrl = `${SITE_URL}/${cleanPath.slice(0, -"index".length)}`;
+    } else {
+      canonicalUrl = `${SITE_URL}/${cleanPath}.html`;
+    }
 
     pageData.frontmatter.head ??= [];
     pageData.frontmatter.head.push(
       ["link", { rel: "canonical", href: canonicalUrl }],
       ["meta", { property: "og:title", content: `${pageTitle} | ${SITE_NAME}` }],
-      ["meta", { property: "og:url", content: canonicalUrl }]
+      ["meta", { property: "og:url", content: canonicalUrl }],
+      ["meta", { name: "twitter:url", content: canonicalUrl }]
     );
 
     if (pageData.frontmatter.description) {
