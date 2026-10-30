@@ -1,5 +1,5 @@
 import { defineConfig } from "vitepress";
-import llmstxt from "vitepress-plugin-llms";
+import llmstxt, { copyOrDownloadAsMarkdownButtons } from "vitepress-plugin-llms";
 
 // Canonical site configuration
 export const SITE_URL = "https://muhammad-fiaz.github.io/regex.zig";
@@ -36,6 +36,12 @@ export default defineConfig({
 
   vite: {
     plugins: [llmstxt()],
+  },
+
+  markdown: {
+    config(md) {
+      md.use(copyOrDownloadAsMarkdownButtons);
+    },
   },
 
   head: [
@@ -296,6 +302,13 @@ gtag('config', '${GA_ID}');`,
 
     search: {
       provider: "local",
+    },
+
+    llms: {
+      copyText: "Copy page",
+      copiedText: "Copied",
+      viewMarkdownText: "View as Markdown",
+      openInAIText: "Open in {provider}",
     },
 
     editLink: {
