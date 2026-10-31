@@ -1,5 +1,5 @@
 import { defineConfig } from "vitepress";
-import llmstxt, { copyOrDownloadAsMarkdownButtons } from "vitepress-plugin-llms";
+import llmstxt from "vitepress-plugin-llms";
 
 // Canonical site configuration
 export const SITE_URL = "https://muhammad-fiaz.github.io/regex.zig";
@@ -38,11 +38,6 @@ export default defineConfig({
     plugins: [llmstxt()],
   },
 
-  markdown: {
-    config(md) {
-      md.use(copyOrDownloadAsMarkdownButtons);
-    },
-  },
 
   head: [
     // Primary Meta Tags
@@ -229,6 +224,25 @@ gtag('config', '${GA_ID}');`,
     }
     graph.push(primarySchema);
 
+    // BreadcrumbList
+    const breadcrumbParts = cleanPath
+      .split("/")
+      .filter((part: string) => part && part !== "index");
+    if (breadcrumbParts.length > 0) {
+    const breadcrumbs: Record<string, unknown>[] = [
+      { "@type": "ListItem", position: 1, name: "Home", item: `${SITE_URL}/` },
+    ];
+    if (!isHome) {
+      breadcrumbs.push({
+        "@type": "ListItem",
+        position: 2,
+        name: pageTitle,
+        item: canonicalUrl,
+      });
+    }
+    graph.push({ "@type": "BreadcrumbList", itemListElement: breadcrumbs });
+    }
+
     pageData.frontmatter.head.push([
       "script",
       { type: "application/ld+json" },
@@ -302,13 +316,6 @@ gtag('config', '${GA_ID}');`,
 
     search: {
       provider: "local",
-    },
-
-    llms: {
-      copyText: "Copy page",
-      copiedText: "Copied",
-      viewMarkdownText: "View as Markdown",
-      openInAIText: "Open in {provider}",
     },
 
     editLink: {
