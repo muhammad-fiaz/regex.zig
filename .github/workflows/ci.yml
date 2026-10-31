@@ -40,12 +40,12 @@ jobs:
         include:
           - { name: x86_64-linux,     target: x86_64-linux-gnu,      optimize: Debug,       qemu: false }
           - { name: aarch64-linux,    target: aarch64-linux-musl,    optimize: Debug,       qemu: true }
-          - { name: x86-linux,        target: x86-linux-musl,        optimize: Debug,       qemu: true }
-          - { name: x86-linux-safe,   target: x86-linux-musl,        optimize: ReleaseSafe, qemu: true }
-          - { name: arm-linux,        target: arm-linux-musleabihf,  optimize: Debug,       qemu: true }
-          - { name: arm-linux-safe,   target: arm-linux-musleabihf,  optimize: ReleaseSafe, qemu: true }
+          - { name: x86-linux,        target: x86-linux-musl,       optimize: Debug,       qemu: true }
+          - { name: x86-linux-safe,   target: x86-linux-musl,       optimize: ReleaseSafe, qemu: true }
+          - { name: arm-linux,        target: arm-linux-musleabihf, optimize: Debug,       qemu: true }
+          - { name: arm-linux-safe,   target: arm-linux-musleabihf, optimize: ReleaseSafe, qemu: true }
           - { name: thumb-linux,      target: thumb-linux-musleabihf, optimize: Debug,     qemu: true }
-          - { name: riscv32-linux,    target: riscv32-linux-musl,    optimize: Debug,       qemu: true }
+          - { name: riscv32-linux,    target: riscv32-linux-musl,   optimize: Debug,       qemu: true }
     steps:
       - uses: actions/checkout@v7
       - uses: mlugg/setup-zig@v2
