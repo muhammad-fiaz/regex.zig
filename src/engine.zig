@@ -18,7 +18,16 @@ pub const UNSET_SLOT = std.math.maxInt(usize);
 
 pub const Thread = struct {
     inst_id: u32,
+    /// Number of input bytes still to skip before this thread becomes active.
+    /// Non-zero only while a multi-byte character is being consumed.
+    skip: u8 = 0,
     slots: [MAX_SLOTS]usize = @splat(UNSET_SLOT),
+};
+
+/// Queue entry for boolean matching, where capture slots are not needed.
+pub const BoolThread = struct {
+    inst_id: u32,
+    skip: u8 = 0,
 };
 
 /// Reusable execution scratch state to avoid runtime allocations during matching.
@@ -27,51 +36,61 @@ pub const Scratch = struct {
     next_queue: []Thread,
     visited: []u32,
     generation: u32 = 0,
-    bool_curr: []u32,
-    bool_next: []u32,
+    bool_curr: []BoolThread,
+    bool_next: []BoolThread,
     raw_threads: []Thread,
+    raw_bool_threads: []BoolThread,
     raw_u32s: []u32,
     capacity: usize,
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, max_insts: usize) !Scratch {
-        const capacity = max_insts + 4;
-        const u32s = try allocator.alloc(u32, capacity * 3);
-        errdefer allocator.free(u32s);
+        const capacity = std.math.add(usize, max_insts, 4) catch return error.OutOfMemory;
+        const double_capacity = std.math.mul(usize, capacity, 2) catch return error.OutOfMemory;
 
-        const vis = u32s[0..capacity];
-        const b_curr = u32s[capacity .. capacity * 2];
-        const b_next = u32s[capacity * 2 .. capacity * 3];
+        const vis = try allocator.alloc(u32, capacity);
+        errdefer allocator.free(vis);
+
+        const bool_threads = try allocator.alloc(BoolThread, double_capacity);
+        errdefer allocator.free(bool_threads);
+
+        const threads = try allocator.alloc(Thread, double_capacity);
+        errdefer allocator.free(threads);
 
         @memset(vis, 0);
 
         return .{
-            .curr_queue = &[_]Thread{},
-            .next_queue = &[_]Thread{},
+            .curr_queue = threads[0..capacity],
+            .next_queue = threads[capacity..double_capacity],
             .visited = vis,
             .generation = 0,
-            .bool_curr = b_curr,
-            .bool_next = b_next,
-            .raw_threads = &[_]Thread{},
-            .raw_u32s = u32s,
+            .bool_curr = bool_threads[0..capacity],
+            .bool_next = bool_threads[capacity..double_capacity],
+            .raw_threads = threads,
+            .raw_bool_threads = bool_threads,
+            .raw_u32s = vis,
             .capacity = capacity,
             .allocator = allocator,
         };
     }
 
+    /// Capture queues are allocated eagerly by `init`; retained for compatibility.
     pub fn ensureThreadQueues(self: *Scratch) !void {
-        if (self.raw_threads.len == 0) {
-            const threads = try self.allocator.alloc(Thread, self.capacity * 2);
-            self.raw_threads = threads;
-            self.curr_queue = threads[0..self.capacity];
-            self.next_queue = threads[self.capacity .. self.capacity * 2];
-        }
+        _ = self;
+    }
+
+    /// Returns true when this scratch context was sized for at least `prog`.
+    pub fn supportsProgram(self: *const Scratch, prog: *const Prog) bool {
+        return self.visited.len >= prog.insts.len and
+            self.curr_queue.len >= prog.insts.len and
+            self.bool_curr.len >= prog.insts.len;
     }
 
     pub fn deinit(self: *Scratch) void {
         if (self.raw_threads.len > 0) {
             self.allocator.free(self.raw_threads);
         }
+        self.allocator.free(self.raw_bool_threads);
         self.allocator.free(self.raw_u32s);
         self.* = undefined;
     }
@@ -98,15 +117,17 @@ pub const Engine = struct {
 
         // Fast-path: pure literal pattern
         if (prog.is_pure_literal and prog.literal_prefix != null) {
-            return literal_mod.findLiteralPos(input, prog.literal_prefix.?, start_pos, prog.flags.caseless) != null;
+            return literal_mod.findLiteralPos(input, prog.literal_prefix.?, start_pos, prog.literal_prefix_caseless) != null;
         }
+
+        if (!scratch.supportsProgram(prog)) return false;
 
         const is_start_anchored = prog.is_start_anchored;
 
         // Fast-path: start-anchored pattern with prefix
         if (is_start_anchored) {
             if (prog.literal_prefix) |prefix| {
-                if (!literal_mod.startsWith(input[start_pos..], prefix, prog.flags.caseless)) {
+                if (!literal_mod.startsWith(input[start_pos..], prefix, prog.literal_prefix_caseless)) {
                     return false;
                 }
             }
@@ -120,7 +141,7 @@ pub const Engine = struct {
             if (prog.literal_prefix) |prefix| {
                 if (prefix.len > 0) {
                     if (input.len < pos + prefix.len) return false;
-                    if (literal_mod.findLiteralPos(input, prefix, pos, prog.flags.caseless)) |cand| {
+                    if (literal_mod.findLiteralPos(input, prefix, pos, prog.literal_prefix_caseless)) |cand| {
                         pos = cand;
                     } else {
                         return false;
@@ -171,9 +192,30 @@ pub const Engine = struct {
             next_len = 0;
             const next_gen = scratch.nextGeneration();
 
-            for (scratch.bool_curr[0..curr_len]) |inst_id| {
-                const inst = prog.insts[inst_id];
+            for (scratch.bool_curr[0..curr_len]) |thread| {
+                if (thread.skip > 0) {
+                    if (thread.skip > 1) {
+                        enqueueBoolThread(&scratch.bool_next, &next_len, thread.inst_id, thread.skip - 1);
+                    } else {
+                        addBoolThread(
+                            prog,
+                            scratch,
+                            &scratch.bool_next,
+                            &next_len,
+                            &matched_early,
+                            thread.inst_id,
+                            input,
+                            p + 1,
+                            next_gen,
+                        );
+                        if (matched_early) return true;
+                    }
+                    continue;
+                }
+
+                const inst = prog.insts[thread.inst_id];
                 var matched = false;
+                var char_len: usize = 1;
 
                 switch (inst.op) {
                     .byte => {
@@ -193,15 +235,30 @@ pub const Engine = struct {
                             matched = (c >= lo and c <= hi);
                         }
                     },
-                    .any_byte => {
-                        matched = true;
+                    .any_char => {
+                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
+                            matched = true;
+                            char_len = unicode_mod.charLengthAt(input, p);
+                        }
                     },
-                    .any_non_nl => {
-                        matched = (c != '\n');
+                    .any_char_non_nl => {
+                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
+                            matched = (c != '\n');
+                            if (matched) char_len = unicode_mod.charLengthAt(input, p);
+                        }
                     },
                     .char_class => {
                         const cc = prog.char_classes[inst.data];
-                        matched = cc.matchesByte(c);
+                        if (p > 0 and unicode_mod.isUtf8Continuation(c)) {
+                            matched = false;
+                        } else if (c < 0x80) {
+                            matched = cc.matchesByte(c);
+                        } else if (unicode_mod.decodeUtf8Char(input[p..])) |dec| {
+                            matched = cc.matches(dec.cp);
+                            char_len = dec.len;
+                        } else {
+                            matched = cc.matchesByte(c);
+                        }
                     },
                     .match => {
                         return true;
@@ -210,17 +267,21 @@ pub const Engine = struct {
                 }
 
                 if (matched) {
-                    addBoolThread(
-                        prog,
-                        scratch,
-                        &scratch.bool_next,
-                        &next_len,
-                        &matched_early,
-                        inst.out1,
-                        input,
-                        p + 1,
-                        next_gen,
-                    );
+                    if (char_len > 1) {
+                        enqueueBoolThread(&scratch.bool_next, &next_len, inst.out1, @intCast(char_len - 1));
+                    } else {
+                        addBoolThread(
+                            prog,
+                            scratch,
+                            &scratch.bool_next,
+                            &next_len,
+                            &matched_early,
+                            inst.out1,
+                            input,
+                            p + 1,
+                            next_gen,
+                        );
+                    }
                     if (matched_early) return true;
                 }
             }
@@ -235,8 +296,8 @@ pub const Engine = struct {
         }
 
         // Process any remaining match threads at end of input
-        for (scratch.bool_curr[0..curr_len]) |inst_id| {
-            if (prog.insts[inst_id].op == .match) {
+        for (scratch.bool_curr[0..curr_len]) |thread| {
+            if (thread.skip == 0 and prog.insts[thread.inst_id].op == .match) {
                 return true;
             }
         }
@@ -244,10 +305,17 @@ pub const Engine = struct {
         return false;
     }
 
+    fn enqueueBoolThread(queue: *[]BoolThread, queue_len: *usize, inst_id: u32, skip: u8) void {
+        if (queue_len.* < queue.len) {
+            queue.*[queue_len.*] = .{ .inst_id = inst_id, .skip = skip };
+            queue_len.* += 1;
+        }
+    }
+
     fn addBoolThread(
         prog: *const Prog,
         scratch: *Scratch,
-        queue: *[]u32,
+        queue: *[]BoolThread,
         queue_len: *usize,
         matched_early: *bool,
         start_inst_id: u32,
@@ -286,11 +354,8 @@ pub const Engine = struct {
                     }
                     return;
                 },
-                .byte, .byte_range, .any_byte, .any_non_nl, .char_class => {
-                    if (queue_len.* < queue.len) {
-                        queue.*[queue_len.*] = inst_id;
-                        queue_len.* += 1;
-                    }
+                .byte, .byte_range, .any_char, .any_char_non_nl, .char_class => {
+                    enqueueBoolThread(queue, queue_len, inst_id, 0);
                     return;
                 },
                 .fail => return,
@@ -310,7 +375,7 @@ pub const Engine = struct {
         // Fast-path: pure literal pattern
         if (prog.is_pure_literal and prog.literal_prefix != null) {
             const prefix = prog.literal_prefix.?;
-            const caseless = prog.flags.caseless;
+            const caseless = prog.literal_prefix_caseless;
             if (literal_mod.findLiteralPos(input, prefix, start_pos, caseless)) |pos| {
                 var caps = Captures{
                     .input = input,
@@ -323,14 +388,14 @@ pub const Engine = struct {
             return null;
         }
 
-        scratch.ensureThreadQueues() catch return null;
+        if (!scratch.supportsProgram(prog)) return null;
 
         const is_start_anchored = prog.is_start_anchored;
 
         // Fast-path: start-anchored pattern with prefix
         if (is_start_anchored) {
             if (prog.literal_prefix) |prefix| {
-                if (!literal_mod.startsWith(input[start_pos..], prefix, prog.flags.caseless)) {
+                if (!literal_mod.startsWith(input[start_pos..], prefix, prog.literal_prefix_caseless)) {
                     return null;
                 }
             }
@@ -344,7 +409,7 @@ pub const Engine = struct {
             if (prog.literal_prefix) |prefix| {
                 if (prefix.len > 0) {
                     if (input.len < pos + prefix.len) return null;
-                    if (literal_mod.findLiteralPos(input, prefix, pos, prog.flags.caseless)) |cand| {
+                    if (literal_mod.findLiteralPos(input, prefix, pos, prog.literal_prefix_caseless)) |cand| {
                         pos = cand;
                     } else {
                         // Prefix never occurs in remainder of input
@@ -408,8 +473,30 @@ pub const Engine = struct {
             const next_gen = scratch.nextGeneration();
 
             for (scratch.curr_queue[0..curr_len]) |*t| {
+                if (t.skip > 0) {
+                    if (t.skip > 1) {
+                        enqueuePendingThread(&scratch.next_queue, &next_len, t.inst_id, t.skip - 1, &t.slots, num_slots);
+                    } else {
+                        addThread(
+                            prog,
+                            scratch,
+                            &scratch.next_queue,
+                            &next_len,
+                            &best_match_slots,
+                            t.inst_id,
+                            &t.slots,
+                            input,
+                            p + 1,
+                            next_gen,
+                            num_slots,
+                        );
+                    }
+                    continue;
+                }
+
                 const inst = prog.insts[t.inst_id];
                 var matched = false;
+                var char_len: usize = 1;
 
                 switch (inst.op) {
                     .byte => {
@@ -429,15 +516,30 @@ pub const Engine = struct {
                             matched = (c >= lo and c <= hi);
                         }
                     },
-                    .any_byte => {
-                        matched = true;
+                    .any_char => {
+                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
+                            matched = true;
+                            char_len = unicode_mod.charLengthAt(input, p);
+                        }
                     },
-                    .any_non_nl => {
-                        matched = (c != '\n');
+                    .any_char_non_nl => {
+                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
+                            matched = (c != '\n');
+                            if (matched) char_len = unicode_mod.charLengthAt(input, p);
+                        }
                     },
                     .char_class => {
                         const cc = prog.char_classes[inst.data];
-                        matched = cc.matchesByte(c);
+                        if (p > 0 and unicode_mod.isUtf8Continuation(c)) {
+                            matched = false;
+                        } else if (c < 0x80) {
+                            matched = cc.matchesByte(c);
+                        } else if (unicode_mod.decodeUtf8Char(input[p..])) |dec| {
+                            matched = cc.matches(dec.cp);
+                            char_len = dec.len;
+                        } else {
+                            matched = cc.matchesByte(c);
+                        }
                     },
                     .match => {
                         var match_slots: [MAX_SLOTS]usize = undefined;
@@ -449,19 +551,23 @@ pub const Engine = struct {
                 }
 
                 if (matched) {
-                    addThread(
-                        prog,
-                        scratch,
-                        &scratch.next_queue,
-                        &next_len,
-                        &best_match_slots,
-                        inst.out1,
-                        &t.slots,
-                        input,
-                        p + 1,
-                        next_gen,
-                        num_slots,
-                    );
+                    if (char_len > 1) {
+                        enqueuePendingThread(&scratch.next_queue, &next_len, inst.out1, @intCast(char_len - 1), &t.slots, num_slots);
+                    } else {
+                        addThread(
+                            prog,
+                            scratch,
+                            &scratch.next_queue,
+                            &next_len,
+                            &best_match_slots,
+                            inst.out1,
+                            &t.slots,
+                            input,
+                            p + 1,
+                            next_gen,
+                            num_slots,
+                        );
+                    }
                 }
             }
 
@@ -476,7 +582,7 @@ pub const Engine = struct {
 
         // Process any remaining match threads at end of input
         for (scratch.curr_queue[0..curr_len]) |*t| {
-            if (prog.insts[t.inst_id].op == .match) {
+            if (t.skip == 0 and prog.insts[t.inst_id].op == .match) {
                 var match_slots: [MAX_SLOTS]usize = undefined;
                 @memcpy(match_slots[0..num_slots], t.slots[0..num_slots]);
                 best_match_slots = match_slots;
@@ -489,6 +595,23 @@ pub const Engine = struct {
         }
 
         return null;
+    }
+
+    fn enqueuePendingThread(
+        queue: *[]Thread,
+        queue_len: *usize,
+        inst_id: u32,
+        skip: u8,
+        slots: *const [MAX_SLOTS]usize,
+        num_slots: usize,
+    ) void {
+        if (queue_len.* < queue.len) {
+            const target = &queue.*[queue_len.*];
+            target.inst_id = inst_id;
+            target.skip = skip;
+            @memcpy(target.slots[0..num_slots], slots[0..num_slots]);
+            queue_len.* += 1;
+        }
     }
 
     fn addThread(
@@ -523,6 +646,7 @@ pub const Engine = struct {
                     if (queue_len.* < queue.len) {
                         const target = &queue.*[queue_len.*];
                         target.inst_id = inst_id;
+                        target.skip = 0;
                         @memcpy(target.slots[0..num_slots], match_slots[0..num_slots]);
                         queue_len.* += 1;
                     }
@@ -556,10 +680,11 @@ pub const Engine = struct {
                     }
                     return;
                 },
-                .byte, .byte_range, .any_byte, .any_non_nl, .char_class => {
+                .byte, .byte_range, .any_char, .any_char_non_nl, .char_class => {
                     if (queue_len.* < queue.len) {
                         const target = &queue.*[queue_len.*];
                         target.inst_id = inst_id;
+                        target.skip = 0;
                         @memcpy(target.slots[0..num_slots], slots[0..num_slots]);
                         queue_len.* += 1;
                     }

@@ -44,4 +44,12 @@ pub fn main() !void {
     std.debug.print("\nUnicode Caseless Match ('café' on 'CAFÉ'): {}\n", .{
         accented_re.isMatch("CAFÉ", .{}),
     });
+
+    // 4. Unicode codepoint ranges in character classes
+    var hiragana_re = try regex.compile(allocator, "[\\u{3040}-\\u{309F}]+", .{});
+    defer hiragana_re.deinit();
+
+    if (hiragana_re.find("にほんご", .{})) |m| {
+        std.debug.print("\nHiragana range match: '{s}' ({} bytes)\n", .{ m.slice, m.len() });
+    }
 }

@@ -20,16 +20,36 @@ The following metacharacters have special syntactic meaning and must be escaped 
 
 Use `regex.escape(allocator, raw_str)` or `regex.escapeBuffer(&buf, raw_str)` to programmatically escape user input.
 
+Supported escapes include `\n`, `\r`, `\t`, `\f`, `\v`, `\a`, `\e`, `\0`,
+`\xHH` (byte value), and `\u{HHHHHH}` (Unicode codepoint up to `0x10FFFF`).
+Escaped metacharacters such as `\.` or `\[` match their literal character.
+
+---
+
+## Dot (`.`)
+
+`.` matches one complete UTF-8 character, not one byte. For example, `.` against
+`"é"` produces a single match spanning both UTF-8 bytes (`0..2`). By default `.`
+excludes newline (`\n`); enable `dotAll` (`(?s)` or `.dotAll = true`) to include it.
+Invalid or truncated UTF-8 sequences are consumed one byte at a time so scanning
+always makes progress.
+
 ---
 
 ## Character Classes
 
-Bracket expressions define custom character sets:
+Bracket expressions define custom character sets. Items and ranges are decoded as
+UTF-8 codepoints, so multi-byte characters behave as single members:
 
 - `[abc]`: Matches any character in the set (`a`, `b`, or `c`).
 - `[^abc]`: Negated set — matches any character not in `a`, `b`, or `c`.
 - `[a-z0-9]`: Range expressions matching lowercase letters and digits.
+- `[é-ê]`: Raw UTF-8 characters and ranges are supported directly.
 - `[\u{3040}-\u{309F}]`: Unicode codepoint ranges up to 21 bits.
+
+Negated classes also consume a complete character, so `[^a]` matches `"é"` as one
+match rather than two byte matches. With `caseInsensitive`, classes fold case for
+ASCII and the supported Latin-1, Greek, and Cyrillic blocks.
 
 ### Predefined Character Shorthands
 
@@ -41,6 +61,10 @@ Bracket expressions define custom character sets:
 | `\W` | Non-word character | `[^a-zA-Z0-9_]` |
 | `\s` | Whitespace | `[ \t\r\n\x0c\x0b]` |
 | `\S` | Non-whitespace | `[^ \t\r\n\x0c\x0b]` |
+
+Shorthand classes and `\b`/`\B` boundaries use ASCII semantics in this release.
+The `ascii` compile option is accepted for forward compatibility and does not
+change dot or explicit Unicode character classes.
 
 ### POSIX Character Classes
 
@@ -81,12 +105,14 @@ Quantifiers define how many times the preceding atom may match:
 
 ## Grouping & Captures
 
-- `(expr)`: Numbered capturing group. Submatch offsets are recorded into capture slots `$1`, `$2`, etc.
+- `(expr)`: Numbered capturing group. Submatch offsets are recorded into capture slots `$1`, `$2`, etc. Up to 31 capturing groups are addressable (32 inline slots including the full match).
 - `(?:expr)`: Non-capturing group. Groups sub-expressions without consuming capture slot indices.
-- `(?P<name>expr)`: Named capturing group. Retrieve matched slice by identifier with `caps.name("name")`.
+- `(?P<name>expr)` / `(?<name>expr)`: Named capturing group. Retrieve matched slice by identifier with `caps.name("name")`.
 - `(?i)` / `(?-i)`: Inline case-insensitive flag toggles.
 - `(?m)` / `(?-m)`: Inline multiline flag toggles.
 - `(?s)` / `(?-s)`: Inline dot-all flag toggles.
+- `(?U)` / `(?-U)`: Inline ungreedy flag toggles.
+- `(?i:expr)`: Scoped flag group. Flags apply only inside the group and are restored afterwards.
 
 ---
 
@@ -94,5 +120,5 @@ Quantifiers define how many times the preceding atom may match:
 
 To guarantee **linear-time execution** and prevent arbitrary computational complexity, the following non-regular constructs are intentionally rejected at compile time:
 
-- **Backreferences** (e.g. `\1`, `\2`): Backreferences transform pattern matching into an NP-complete problem.
-- **Lookaround Assertions** (e.g. `(?=...)`, `(?!...)`): Lookahead and lookbehind assertions complicate non-backtracking NFA engines.
+- **Backreferences** (e.g. `\1`, `\2`, `\k<name>`): Backreferences transform pattern matching into an NP-complete problem.
+- **Lookaround Assertions** (e.g. `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`): Lookahead and lookbehind assertions complicate non-backtracking NFA engines.

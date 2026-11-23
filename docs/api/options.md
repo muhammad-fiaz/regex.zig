@@ -20,6 +20,7 @@ pub const CompileOptions = struct {
     multiline: bool = false,
     dotAll: bool = false,
     ungreedy: bool = false,
+    /// ASCII shorthand semantics; accepted for forward compatibility.
     ascii: bool = false,
     limits: Limits = .{},
 };
@@ -36,7 +37,7 @@ pub const Limits = struct {
     maxPatternLength: usize = 65536,
     maxNestingDepth: usize = 256,
     maxProgramSize: usize = 65536,
-    maxCaptures: usize = 128,
+    maxCaptures: usize = 31,
     maxRepetition: usize = 1000,
 };
 ```

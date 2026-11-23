@@ -28,7 +28,8 @@ pub const CompileOptions = struct {
     /// Inverts the greediness of quantifiers ('U' flag).
     ungreedy: bool = false,
 
-    /// Restrict shorthand classes (\d, \w, \s) and boundaries to ASCII.
+    /// Use ASCII semantics for shorthand classes and boundaries.
+    /// Shorthand classes are ASCII in this release; accepted for forward compatibility.
     ascii: bool = false,
 
     /// Safety and memory resource limits.
@@ -68,8 +69,9 @@ pub const Limits = struct {
     /// Maximum compiled instruction count in the bytecode program (default: 65,536).
     maxProgramSize: usize = 65536,
 
-    /// Maximum number of capturing groups allowed (default: 128).
-    maxCaptures: usize = 128,
+    /// Maximum number of capturing groups allowed (default: 31).
+    /// Values above 31 are clamped to the inline capture slot capacity.
+    maxCaptures: usize = 31,
 
     /// Maximum repetition count in bounded repetitions {min,max} (default: 1,000).
     maxRepetition: usize = 1000,

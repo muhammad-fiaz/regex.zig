@@ -32,7 +32,7 @@ pub const Iterator = struct {
 
         if (self.last_zero_len) {
             if (self.pos >= self.input.len) return null;
-            const seq_len = unicode.utf8SequenceLength(self.input[self.pos]);
+            const seq_len = unicode.charLengthAt(self.input, self.pos);
             self.pos += @min(seq_len, self.input.len - self.pos);
             self.last_zero_len = false;
             if (self.pos > self.input.len) return null;
@@ -85,7 +85,7 @@ pub const CapturesIterator = struct {
 
         if (self.last_zero_len) {
             if (self.pos >= self.input.len) return null;
-            const seq_len = unicode.utf8SequenceLength(self.input[self.pos]);
+            const seq_len = unicode.charLengthAt(self.input, self.pos);
             self.pos += @min(seq_len, self.input.len - self.pos);
             self.last_zero_len = false;
             if (self.pos > self.input.len) return null;

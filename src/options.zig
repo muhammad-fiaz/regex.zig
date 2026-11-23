@@ -1,5 +1,9 @@
 const std = @import("std");
 
+/// Number of capture groups addressable by the inline `Captures` storage.
+/// Group 0 is the full match, leaving 31 user-visible groups in 32 slots.
+pub const max_inline_capture_groups: usize = 31;
+
 /// Safety and resource limits to defend against algorithmic denial of service (ReDoS).
 pub const Limits = struct {
     /// Maximum allowed pattern length in bytes.
@@ -12,7 +16,9 @@ pub const Limits = struct {
     maxProgramSize: usize = 65536,
 
     /// Maximum number of capturing groups allowed in a pattern.
-    maxCaptures: usize = 128,
+    /// Values above `max_inline_capture_groups` are clamped to keep every
+    /// capture addressable by the inline `Captures` storage.
+    maxCaptures: usize = max_inline_capture_groups,
 
     /// Maximum repetition count in bounded repetitions {min,max}.
     maxRepetition: usize = 1000,
@@ -32,7 +38,9 @@ pub const CompileOptions = struct {
     /// Inverts the greediness of quantifiers ('U' flag).
     ungreedy: bool = false,
 
-    /// Restrict shorthand classes (\d, \w, \s) and boundaries to ASCII.
+    /// Use ASCII semantics for shorthand classes (\d, \w, \s) and boundaries.
+    /// Shorthand classes are ASCII in this release; the flag is accepted for
+    /// forward compatibility and does not affect dot or explicit Unicode classes.
     ascii: bool = false,
 
     /// Safety and memory resource limits.

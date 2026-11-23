@@ -75,17 +75,17 @@
 | **Linear-Time PikeVM** | Non-backtracking virtual machine executing an in-order Thompson NFA across dual lockstep queues with $O(1)$ state deduplication. Worst-case execution time is strictly bounded to $O(M \times N)$. |
 | **ReDoS Immunity** | Mathematically immune to catastrophic backtracking and Regular Expression Denial of Service (ReDoS) exploits. Pathological inputs like `(a+)+$` on $a^{30}!$ reject in microseconds. |
 | **Inline `.{}` Options** | Ergonomic and uniform configuration standard across all public APIs: `compile(alloc, pat, .{})`, `isMatch(in, .{})`, `find(in, .{})`, `findAll(alloc, in, .{})`, `captures(in, .{})`, `replace(...)`, and `split(...)`. |
-| **Submatch Captures** | High-performance capture group extraction with up to 32 inline capture slots, zero heap allocations during search, and positional indexing (`caps.get(1)`). |
-| **Named Captures** | Full support for Perl-compatible named groups `(?P<name>...)` accessible by identifier with `caps.name("name")`. |
+| **Submatch Captures** | High-performance capture group extraction with 32 inline capture slots (full match + 31 groups), zero heap allocations during search, and positional indexing (`caps.get(1)`). |
+| **Named Captures** | Full support for Perl-compatible named groups `(?P<name>...)` and `(?<name>...)` accessible by identifier with `caps.name("name")`. |
 | **Literal Prefilters** | Automatic literal prefix extraction with fast substring search that bypasses full NFA simulation when the prefix does not appear in the input. |
-| **Unicode & UTF-8** | Multi-byte UTF-8 decoding, Unicode codepoint ranges (`[\u{3040}-\u{309F}]`), ASCII shorthands (`\d`, `\w`, `\s`), POSIX bracket classes, and Unicode simple case-folding across multi-byte codepoints. |
+| **Unicode & UTF-8** | Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges (`[é-ê]`, `[\u{3040}-\u{309F}]`), ASCII shorthands (`\d`, `\w`, `\s`), POSIX bracket classes, scoped inline flags (`(?i)`, `(?i:...)`, `(?-s)`), and simple case-folding for Latin-1, Greek, and Cyrillic codepoints. |
 | **Replacement Subsystem** | Fast template expansion replacing the first match (`replace`) or all matches (`replaceAll`) with numbered `$1` and named `${name}` backreferences. |
 | **Splitting & Delimiters** | Splits text across regular expression delimiters with configurable maximum split counts and zero memory leaks. |
 | **Safe Streaming Iterators** | Forward stream iteration (`iterator`, `capturesIterator`) that safely progresses past zero-length matches (such as `\b`) without getting stuck in infinite loops. |
 | **Zero Runtime Allocations** | Boolean matching, leftmost-first finding, and capture extraction execute entirely inside a pre-calculated, reusable thread scratch buffer with zero heap allocations during matching. |
 | **Hardened Safety Limits** | Configurable limits (`Limits`) for maximum pattern length, group nesting depth, repetition bounds, and compiled bytecode budgets to prevent memory exhaustion. |
 | **Structured Error Diagnostics** | Returns typed Zig error unions accompanied by line, column, and byte-offset syntax error diagnostic reporting. |
-| **Pure Native Zig 0.17** | Built entirely from scratch in native Zig 0.17.0 using standard library facilities (`std.ascii`, `std.unicode`, `std.math`). Zero C code, zero libc, and zero external packages. |
+| **Pure Native Zig 0.17** | Built entirely from scratch in native Zig 0.17.0 using standard library facilities (`std.ascii`, `std.unicode`, `std.mem`, `std.bit_set`, `std.math`). Zero C code, zero libc, and zero external packages. |
 | **Cross-Platform Portability** | Endian-neutral, pointer-size agnostic implementation tested and validated across Windows, Linux, and macOS on x86, x86_64, aarch64, and ARM architectures. |
 
 </details>
@@ -141,10 +141,10 @@ zig build -Dtarget=x86-windows
 
 ### Method 1: Zig Fetch (Recommended)
 
-**Latest Release (0.0.1)**
+**Latest Release (0.0.2)**
 
 ```bash
-zig fetch --save https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz
+zig fetch --save https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.2.tar.gz
 ```
 
 ### Method 2: Zig Fetch (Latest Development Build)
@@ -160,7 +160,7 @@ zig fetch --save git+https://github.com/muhammad-fiaz/regex.zig.git
 ```zig
 .dependencies = .{
     .regex = .{
-        .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.1.tar.gz",
+        .url = "https://github.com/muhammad-fiaz/regex.zig/archive/refs/tags/0.0.2.tar.gz",
         .hash = "...", // Run `zig fetch --save <url>` to generate the hash.
     },
 },
@@ -370,12 +370,12 @@ Benchmark target: `x86_64-windows`, `ReleaseFast` (Zig 0.17.0, warmup + 5-round 
 
 | Benchmark | Category | Avg Latency | Throughput | Target |
 | :--- | :--- | :---: | :---: | :---: |
-| `literal_search_2kb` | Core Operations | 22.0 ns/op | **45,438,023 ops/sec** | `x86_64-windows` |
-| `email_pattern_compile` | Compilation | 50.8 µs/op | **19,653 ops/sec** | `x86_64-windows` |
-| `email_matching` | Matching | 1.5 µs/op | **675,466 ops/sec** | `x86_64-windows` |
-| `named_captures_extract` | Captures | 3.4 µs/op | **293,699 ops/sec** | `x86_64-windows` |
-| `replace_all_10_numbers` | Transformation | 7.0 µs/op | **143,075 ops/sec** | `x86_64-windows` |
-| `pathological_redos_linear` | ReDoS Immunity | 11.4 µs/op | **87,702 ops/sec** | `x86_64-windows` |
+| `literal_search_2kb` | Core Operations | 18.7 ns/op | **53,596,313 ops/sec** | `x86_64-windows` |
+| `email_pattern_compile` | Compilation | 43.4 µs/op | **23,049 ops/sec** | `x86_64-windows` |
+| `email_matching` | Matching | 1.5 µs/op | **676,037 ops/sec** | `x86_64-windows` |
+| `named_captures_extract` | Captures | 3.4 µs/op | **293,357 ops/sec** | `x86_64-windows` |
+| `replace_all_10_numbers` | Transformation | 5.7 µs/op | **175,779 ops/sec** | `x86_64-windows` |
+| `pathological_redos_linear` | ReDoS Immunity | 11.3 µs/op | **88,651 ops/sec** | `x86_64-windows` |
 
 ---
 

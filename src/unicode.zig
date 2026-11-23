@@ -11,6 +11,11 @@ pub fn utf8SequenceLength(lead: u8) u3 {
     return std.unicode.utf8ByteSequenceLength(lead) catch 1;
 }
 
+/// True when `b` is a UTF-8 continuation byte (10xxxxxx).
+pub fn isUtf8Continuation(b: u8) bool {
+    return (b & 0xC0) == 0x80;
+}
+
 /// Decode the first UTF-8 codepoint from `bytes`. Returns null if empty or invalid.
 pub fn decodeUtf8Char(bytes: []const u8) ?DecodedChar {
     if (bytes.len == 0) return null;
@@ -18,6 +23,15 @@ pub fn decodeUtf8Char(bytes: []const u8) ?DecodedChar {
     if (bytes.len < len) return null;
     const cp = std.unicode.utf8Decode(bytes[0..len]) catch return null;
     return .{ .cp = cp, .len = len };
+}
+
+/// Return the UTF-8 encoded length of the character starting at `pos`.
+/// Invalid or truncated sequences are treated as a single byte so callers can
+/// continue scanning without getting stuck.
+pub fn charLengthAt(bytes: []const u8, pos: usize) u3 {
+    if (pos >= bytes.len) return 0;
+    if (decodeUtf8Char(bytes[pos..])) |dec| return dec.len;
+    return 1;
 }
 
 /// Convert an ASCII byte to lowercase using std.ascii.toLower.
@@ -102,6 +116,12 @@ test "utf8 decoding" {
     off += c4.len;
 
     try std.testing.expectEqual(s.len, off);
+
+    try std.testing.expectEqual(@as(u3, 1), charLengthAt(s, 0));
+    try std.testing.expectEqual(@as(u3, 2), charLengthAt(s, 1));
+    try std.testing.expectEqual(@as(u3, 3), charLengthAt(s, 3));
+    try std.testing.expectEqual(@as(u3, 4), charLengthAt(s, 6));
+    try std.testing.expectEqual(@as(u3, 0), charLengthAt(s, s.len));
 }
 
 test "case folding" {

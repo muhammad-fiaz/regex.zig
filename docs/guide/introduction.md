@@ -18,7 +18,7 @@ It provides everything needed to build fast, secure, and reliable text-processin
 
 1. **Guaranteed $O(M \times N)$ Linear Time & ReDoS Immunity**: Built on Rob Pike's Virtual Machine (**PikeVM**) and Thompson's NFA construction, candidate states advance in lockstep across dual thread queues. Pathological backtracking patterns reject in microseconds with zero catastrophic backtracking.
 2. **100% Pure Zig 0.17.0**: Zero external dependencies, zero libc requirements, and seamless cross-compilation across Windows, Linux, and macOS on x86, x86_64, aarch64, and ARM architectures.
-3. **Blazing-Fast Throughput**: SIMD-accelerated literal prefilters exceeding 2.8 GB/s bandwidth and ultra-fast boolean matching under 1.3 microseconds.
+3. **Blazing-Fast Throughput**: SIMD-accelerated literal prefilters and ultra-fast boolean matching; see [Benchmarks](./benchmarks.html) for measured results.
 4. **Ergonomic Inline Options (`.{}`)**: Every configurable API accepts an explicit, uniform options struct with documented safe defaults.
 5. **Zero Runtime Heap Allocation**: Boolean matching, span searching, and capture extraction utilize fixed, reusable scratch buffers without heap allocations during search.
 
@@ -29,9 +29,9 @@ It provides everything needed to build fast, secure, and reliable text-processin
 | Capability | Description |
 | :--- | :--- |
 | **Linear-Time PikeVM** | Guaranteed $O(M \times N)$ matching time. Threads advance in lockstep across dual queues with $O(1)$ state deduplication. |
-| **Submatch & Named Captures** | Extract up to 32 inline capture slots with zero heap allocations during search, plus named groups `(?P&lt;name&gt;...)`. |
+| **Submatch & Named Captures** | Extract 32 inline capture slots (full match + 31 groups) with zero heap allocations during search, plus named groups `(?P&lt;name&gt;...)` and `(?&lt;name&gt;...)`. |
 | **Literal Prefilter Acceleration** | Automatically extracts literal prefixes from patterns to perform fast substring searches, skipping NFA execution when the prefix does not match. |
-| **Unicode & UTF-8 Support** | Multi-byte UTF-8 decoding, standard character classes (`\d`, `\w`, `\s`), POSIX bracket classes (`[:alnum:]`), and Unicode simple case-folding. |
+| **Unicode & UTF-8 Support** | Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, ASCII shorthands (`\d`, `\w`, `\s`), POSIX bracket classes (`[:alnum:]`), scoped inline flags, and simple case-folding for Latin-1, Greek, and Cyrillic. |
 | **Replacement Subsystem** | Replace first or all matches with template expansion supporting numbered groups (`$0`, `$1`) and named groups (`${name}`). |
 | **Splitting & Tokenization** | Split input strings across arbitrary regular expression delimiters into allocated slices. |
 | **Safe Streaming Iterators** | Advance past zero-length matches safely without entering infinite loops. |

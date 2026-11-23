@@ -215,7 +215,7 @@ gtag('config', '${GA_ID}');`,
         operatingSystem: "Cross-platform",
         programmingLanguage: "Zig",
         downloadUrl: "https://github.com/muhammad-fiaz/regex.zig",
-        softwareVersion: "0.0.1",
+        softwareVersion: "0.0.2",
         license: "https://opensource.org/licenses/MIT",
       });
     } else {

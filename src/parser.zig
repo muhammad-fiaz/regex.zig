@@ -185,7 +185,6 @@ pub const Parser = struct {
     }
 
     fn parseQuantified(self: *Parser) Error!*Node {
-        const atom_offset = self.pos;
         const atom = try self.parseAtom();
 
         if (self.pos >= self.pattern.len) return atom;
@@ -206,7 +205,7 @@ pub const Parser = struct {
             const greedy = if (self.match('?')) self.current_flags.ungreedy else !self.current_flags.ungreedy;
             rep = .{ .min = 0, .max = 1, .greedy = greedy };
         } else if (b == '{') {
-            rep = try self.parseBraceRepetition(atom_offset);
+            rep = try self.parseBraceRepetition();
         }
 
         if (rep) |r| {
@@ -224,7 +223,7 @@ pub const Parser = struct {
         return atom;
     }
 
-    fn parseBraceRepetition(self: *Parser, atom_offset: usize) Error!Repetition {
+    fn parseBraceRepetition(self: *Parser) Error!Repetition {
         const brace_start = self.pos;
         self.pos += 1; // consume '{'
 
@@ -275,7 +274,6 @@ pub const Parser = struct {
         }
 
         const greedy = if (self.match('?')) self.current_flags.ungreedy else !self.current_flags.ungreedy;
-        _ = atom_offset;
         return Repetition{
             .min = min_val,
             .max = max_val,
@@ -336,7 +334,10 @@ pub const Parser = struct {
                 self.pos += actual_len;
                 const lit_slice = try alloc.dupe(u8, self.pattern[start_pos..self.pos]);
                 const node = try alloc.create(Node);
-                node.* = .{ .literal = lit_slice };
+                node.* = .{ .literal = .{
+                    .bytes = lit_slice,
+                    .caseless = self.current_flags.caseless,
+                } };
                 return node;
             },
         }
@@ -361,6 +362,12 @@ pub const Parser = struct {
             if (self.match(':')) {
                 // Non-capturing group (?:...)
                 is_capturing = false;
+            } else if (self.peek() == '=' or self.peek() == '!') {
+                // Lookahead: unsupported in v0.0.2
+                return self.fail(error.UnsupportedLookaround, .unsupported, group_start, "lookaround assertions are unsupported in v0.0.2");
+            } else if (self.peek() == '<' and self.pos + 1 < self.pattern.len and (self.pattern[self.pos + 1] == '=' or self.pattern[self.pos + 1] == '!')) {
+                // Lookbehind: unsupported in v0.0.2
+                return self.fail(error.UnsupportedLookaround, .unsupported, group_start, "lookbehind assertions are unsupported in v0.0.2");
             } else if (self.match('P') or self.peek() == '<') {
                 // Named capture (?P<name>...) or (?<name>...)
                 if (self.peek() == '<') {
@@ -386,12 +393,6 @@ pub const Parser = struct {
                 } else {
                     return self.fail(error.InvalidGroupName, .syntax, group_start, "malformed named group syntax");
                 }
-            } else if (self.peek() == '=' or self.peek() == '!') {
-                // Lookahead: unsupported in v0.0.1
-                return self.fail(error.UnsupportedLookaround, .unsupported, group_start, "lookaround assertions are unsupported in v0.0.1");
-            } else if (self.peek() == '<' and self.pos + 1 < self.pattern.len and (self.pattern[self.pos + 1] == '=' or self.pattern[self.pos + 1] == '!')) {
-                // Lookbehind: unsupported in v0.0.1
-                return self.fail(error.UnsupportedLookaround, .unsupported, group_start, "lookbehind assertions are unsupported in v0.0.1");
             } else {
                 // Inline flags (?imsU) or flag group (?imsU:...)
                 var set_flag = true;
@@ -432,7 +433,8 @@ pub const Parser = struct {
         var group_idx: ?usize = null;
         if (is_capturing) {
             self.capture_count += 1;
-            if (self.capture_count > self.options.limits.maxCaptures) {
+            const capture_limit = @min(self.options.limits.maxCaptures, options_mod.max_inline_capture_groups);
+            if (self.capture_count > capture_limit) {
                 return self.fail(error.TooManyCaptures, .limit, group_start, "capture group count exceeds limit");
             }
             group_idx = self.capture_count;
@@ -477,11 +479,13 @@ pub const Parser = struct {
         defer ranges.deinit(alloc);
 
         var first_item = true;
+        var closed = false;
 
         while (self.pos < self.pattern.len) {
             const c = self.peek().?;
             if (c == ']' and !first_item) {
                 self.pos += 1;
+                closed = true;
                 break;
             }
             first_item = false;
@@ -502,12 +506,7 @@ pub const Parser = struct {
                 if (PosixClass.fromName(posix_name)) |pclass| {
                     var bm = Bitmap256.initEmpty();
                     pclass.populateBitmap(&bm);
-                    var b: usize = 0;
-                    while (b < 256) : (b += 1) {
-                        if (bm.isSet(@intCast(b))) {
-                            try ranges.append(alloc, .{ .min = @intCast(b), .max = @intCast(b) });
-                        }
-                    }
+                    try appendBitmapRanges(alloc, &bm, &ranges);
                     continue;
                 } else {
                     return self.fail(error.InvalidEscapeSequence, .syntax, posix_start, "unknown POSIX character class name");
@@ -544,12 +543,7 @@ pub const Parser = struct {
                         bm.setRange('0', '9');
                         bm.set('_');
                         bm.invert();
-                        var b: usize = 0;
-                        while (b < 256) : (b += 1) {
-                            if (bm.isSet(@intCast(b))) {
-                                try ranges.append(alloc, .{ .min = @intCast(b), .max = @intCast(b) });
-                            }
-                        }
+                        try appendBitmapRanges(alloc, &bm, &ranges);
                         continue;
                     },
                     's' => {
@@ -571,12 +565,7 @@ pub const Parser = struct {
                         bm.clear('\n');
                         bm.clear(0x0c);
                         bm.clear(0x0b);
-                        var b: usize = 0;
-                        while (b < 256) : (b += 1) {
-                            if (bm.isSet(@intCast(b))) {
-                                try ranges.append(alloc, .{ .min = @intCast(b), .max = @intCast(b) });
-                            }
-                        }
+                        try appendBitmapRanges(alloc, &bm, &ranges);
                         continue;
                     },
                     else => {},
@@ -615,14 +604,35 @@ pub const Parser = struct {
             }
         }
 
-        if (self.pos > self.pattern.len or (self.pos == self.pattern.len and self.pattern[self.pos - 1] != ']')) {
+        if (!closed) {
             return self.fail(error.UnclosedCharacterClass, .syntax, class_start, "unclosed character class bracket");
         }
 
-        const cc = try CharClass.init(alloc, ranges.items, is_negated);
+        var cc = try CharClass.init(alloc, ranges.items, is_negated);
+        cc.caseless = self.current_flags.caseless;
         const node = try alloc.create(Node);
         node.* = .{ .char_class = cc };
         return node;
+    }
+
+    fn appendBitmapRanges(
+        alloc: std.mem.Allocator,
+        bitmap: *const Bitmap256,
+        ranges: *std.ArrayList(Range),
+    ) Error!void {
+        var b: usize = 0;
+        while (b < 256) {
+            if (!bitmap.isSet(@intCast(b))) {
+                b += 1;
+                continue;
+            }
+            const start = b;
+            while (b < 256 and bitmap.isSet(@intCast(b))) : (b += 1) {}
+            try ranges.append(alloc, .{
+                .min = @intCast(start),
+                .max = @intCast(b - 1),
+            });
+        }
     }
 
     fn parseCharClassItem(self: *Parser) Error!u21 {
@@ -630,8 +640,8 @@ pub const Parser = struct {
             return self.fail(error.UnclosedCharacterClass, .syntax, self.pos, "unexpected end of class");
         }
 
-        const b = self.advance().?;
-        if (b == '\\') {
+        if (self.pattern[self.pos] == '\\') {
+            self.pos += 1;
             if (self.pos >= self.pattern.len) {
                 return self.fail(error.UnterminatedEscape, .syntax, self.pos - 1, "dangling escape inside character class");
             }
@@ -647,16 +657,21 @@ pub const Parser = struct {
                 'v' => return 0x0B,
                 '0' => return 0,
                 '\\', '-', '[', ']', '^' => return esc,
-                'x' => {
-                    return self.parseHexEscape();
-                },
-                'u' => {
-                    return self.parseUnicodeEscape();
-                },
+                'x' => return self.parseHexEscape(),
+                'u' => return self.parseUnicodeEscape(),
                 else => return esc,
             }
         }
 
+        // Decode a complete UTF-8 character so ranges and single items operate on
+        // codepoints rather than individual bytes. Invalid sequences fall back to
+        // their leading byte, preserving byte-oriented escapes such as \xFF.
+        if (unicode_mod.decodeUtf8Char(self.pattern[self.pos..])) |dec| {
+            self.pos += dec.len;
+            return dec.cp;
+        }
+        const b = self.pattern[self.pos];
+        self.pos += 1;
         return b;
     }
 
@@ -673,7 +688,7 @@ pub const Parser = struct {
     fn parseUnicodeEscape(self: *Parser) Error!u21 {
         if (self.match('{')) {
             const start = self.pos;
-            var val: u21 = 0;
+            var val: u32 = 0;
             var count: usize = 0;
             while (self.pos < self.pattern.len and self.pattern[self.pos] != '}') {
                 const c = self.pattern[self.pos];
@@ -690,10 +705,13 @@ pub const Parser = struct {
             if (!self.match('}')) {
                 return self.fail(error.InvalidEscapeSequence, .syntax, start, "unclosed unicode escape brace");
             }
+            if (count == 0) {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "empty unicode escape");
+            }
             if (val > 0x10FFFF) {
                 return self.fail(error.InvalidEscapeSequence, .syntax, start, "unicode codepoint out of bounds");
             }
-            return val;
+            return @intCast(val);
         }
         return self.fail(error.InvalidEscapeSequence, .syntax, self.pos - 2, "invalid unicode escape format");
     }
@@ -736,27 +754,36 @@ pub const Parser = struct {
             },
             // Backreferences: unsupported
             '1'...'9' => {
-                return self.fail(error.UnsupportedBackreference, .unsupported, esc_start, "backreferences are unsupported in linear-time v0.0.1 engine");
+                return self.fail(error.UnsupportedBackreference, .unsupported, esc_start, "backreferences are unsupported in linear-time v0.0.2 engine");
             },
             'k' => {
-                return self.fail(error.UnsupportedBackreference, .unsupported, esc_start, "named backreferences are unsupported in v0.0.1");
+                return self.fail(error.UnsupportedBackreference, .unsupported, esc_start, "named backreferences are unsupported in v0.0.2");
             },
             // Hex / Unicode escapes
             'x' => {
                 const val = try self.parseHexEscape();
                 const node = try alloc.create(Node);
-                node.* = .{ .byte_range = .{ .min = @intCast(val), .max = @intCast(val) } };
+                node.* = .{ .byte_range = .{
+                    .min = @intCast(val),
+                    .max = @intCast(val),
+                    .caseless = self.current_flags.caseless,
+                } };
                 return node;
             },
             'u' => {
                 const val = try self.parseUnicodeEscape();
                 if (val <= 255) {
                     const node = try alloc.create(Node);
-                    node.* = .{ .byte_range = .{ .min = @intCast(val), .max = @intCast(val) } };
+                    node.* = .{ .byte_range = .{
+                        .min = @intCast(val),
+                        .max = @intCast(val),
+                        .caseless = self.current_flags.caseless,
+                    } };
                     return node;
                 } else {
                     var ranges = [_]Range{.{ .min = val, .max = val }};
-                    const cc = try CharClass.init(alloc, &ranges, false);
+                    var cc = try CharClass.init(alloc, &ranges, false);
+                    cc.caseless = self.current_flags.caseless;
                     const node = try alloc.create(Node);
                     node.* = .{ .char_class = cc };
                     return node;
@@ -781,7 +808,10 @@ pub const Parser = struct {
         const lit = try alloc.alloc(u8, 1);
         lit[0] = b;
         const node = try alloc.create(Node);
-        node.* = .{ .literal = lit };
+        node.* = .{ .literal = .{
+            .bytes = lit,
+            .caseless = self.current_flags.caseless,
+        } };
         return node;
     }
 
@@ -832,7 +862,8 @@ pub const Parser = struct {
             else => unreachable,
         }
 
-        const cc = try CharClass.init(alloc, ranges.items, is_neg);
+        var cc = try CharClass.init(alloc, ranges.items, is_neg);
+        cc.caseless = self.current_flags.caseless;
         const node = try alloc.create(Node);
         node.* = .{ .char_class = cc };
         return node;
@@ -868,4 +899,24 @@ test "parser unsupported backreference error" {
 
     try testing.expectError(error.UnsupportedBackreference, p.parse());
     try testing.expectEqual(error_mod.ErrorCategory.unsupported, p.diagnostic.?.category);
+}
+
+test "parser character class UTF-8 and closing bracket" {
+    const testing = std.testing;
+
+    var p = Parser.init(testing.allocator, "[\xC3\xA9-\xC3\xAA]", .{});
+    defer p.deinit();
+    var ast = try p.parse();
+    defer ast.deinit();
+    try testing.expect(ast.root.* == .char_class);
+    try testing.expectEqual(@as(u21, 0x00E9), ast.root.char_class.ranges[0].min);
+    try testing.expectEqual(@as(u21, 0x00EA), ast.root.char_class.ranges[0].max);
+
+    var p2 = Parser.init(testing.allocator, "[]", .{});
+    defer p2.deinit();
+    try testing.expectError(error.UnclosedCharacterClass, p2.parse());
+
+    var p3 = Parser.init(testing.allocator, "(?<=a)b", .{});
+    defer p3.deinit();
+    try testing.expectError(error.UnsupportedLookaround, p3.parse());
 }

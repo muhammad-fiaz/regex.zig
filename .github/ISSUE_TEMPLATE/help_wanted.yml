@@ -25,7 +25,7 @@ body:
     id: version
     attributes:
       label: regex.zig Version
-      placeholder: "0.0.1"
+      placeholder: "0.0.2"
 
   - type: input
     id: zig-version

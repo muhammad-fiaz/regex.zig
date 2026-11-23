@@ -27,11 +27,17 @@ pub const Group = struct {
     child: *Node,
 };
 
+/// Literal bytes together with the inline case-insensitivity state at parse time.
+pub const Literal = struct {
+    bytes: []const u8,
+    caseless: bool = false,
+};
+
 /// Single AST node.
 pub const Node = union(enum) {
     empty: void,
-    literal: []const u8,
-    byte_range: struct { min: u8, max: u8 },
+    literal: Literal,
+    byte_range: struct { min: u8, max: u8, caseless: bool = false },
     char_class: CharClass,
     any_char: bool, // true if dotAll (matches newline)
     anchor: AnchorType,
@@ -80,6 +86,7 @@ test "ast node creation" {
     const alloc = arena.allocator();
 
     const node = try alloc.create(Node);
-    node.* = .{ .literal = "hello" };
-    try std.testing.expectEqualStrings("hello", node.literal);
+    node.* = .{ .literal = .{ .bytes = "hello", .caseless = true } };
+    try std.testing.expectEqualStrings("hello", node.literal.bytes);
+    try std.testing.expect(node.literal.caseless);
 }

@@ -156,7 +156,7 @@ pub fn main() !void {
     var semver_re = try regex.compile(allocator, "^\\d+\\.\\d+\\.\\d+$", .{});
     defer semver_re.deinit();
 
-    std.debug.print("0.0.1:  {}\n", .{semver_re.isMatch("0.0.1", .{})});  // true
+    std.debug.print("0.0.2:  {}\n", .{semver_re.isMatch("0.0.2", .{})});  // true
     std.debug.print("v1.0.0: {}\n", .{semver_re.isMatch("v1.0.0", .{})}); // false
 
     var hex_color_re = try regex.compile(allocator, "^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6})$", .{});
@@ -327,6 +327,13 @@ pub fn main() !void {
     });
     defer accented_re.deinit();
     std.debug.print("Accented caseless: {}\n", .{accented_re.isMatch("CAFÉ", .{})}); // true
+
+    // 4. Unicode codepoint ranges in character classes
+    var hiragana_re = try regex.compile(allocator, "[\\u{3040}-\\u{309F}]+", .{});
+    defer hiragana_re.deinit();
+    if (hiragana_re.find("にほんご", .{})) |m| {
+        std.debug.print("Hiragana range: '{s}' ({} bytes)\n", .{ m.slice, m.len() });
+    }
 }
 ```
 
@@ -386,7 +393,7 @@ pub fn main() !void {
     const compile_result = regex.compile(allocator, "((((a))))", .{
         .limits = .{ .maxNestingDepth = 3 },
     });
-    // Returns error.PatternTooDeep
+    // Returns error.NestingTooDeep
     if (compile_result) |_| {} else |err| {
         std.debug.print("Enforced limit error: {s}\n", .{@errorName(err)});
     }

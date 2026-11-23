@@ -4,11 +4,11 @@ const regex = @import("regex");
 pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
-    // Semantic version validation (e.g. 1.2.3 or 0.0.1)
+    // Semantic version validation (e.g. 1.2.3 or 0.0.2)
     var semver_re = try regex.compile(allocator, "^\\d+\\.\\d+\\.\\d+$", .{});
     defer semver_re.deinit();
 
-    const versions = [_][]const u8{ "0.0.1", "1.2.3", "v1.0.0", "1.2", "1.2.3.4" };
+    const versions = [_][]const u8{ "0.0.2", "1.2.3", "v1.0.0", "1.2", "1.2.3.4" };
     std.debug.print("--- Semantic Version Validation ---\n", .{});
     for (versions) |v| {
         std.debug.print("  {s:<10} => {}\n", .{ v, semver_re.isMatch(v, .{}) });
