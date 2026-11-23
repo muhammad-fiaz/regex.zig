@@ -19,7 +19,7 @@ pub fn main() !void {
     const first_two_tags = tag_regex.count(log_data, .{ .maxMatches = 2 });
     std.debug.print("Counted severity tags: {} (limit 2: {})\n", .{ total_tags, first_two_tags });
 
-    // 2. Extract matches with start and end byte index positions
+    // 2. Extract every match with start and end byte index positions
     const matches = try tag_regex.findAll(allocator, log_data, .{});
     defer allocator.free(matches);
 
@@ -33,7 +33,15 @@ pub fn main() !void {
         });
     }
 
-    // 3. Search for IP address and verify byte indices by slicing source directly
+    // 3. Collect only the first two matches with a bounded query
+    const limited = try tag_regex.findAll(allocator, log_data, .{ .maxMatches = 2 });
+    defer allocator.free(limited);
+
+    std.debug.print("Limited query returned {} tags:", .{limited.len});
+    for (limited) |m| std.debug.print(" {s}", .{m.slice});
+    std.debug.print("\n", .{});
+
+    // 4. Search for an IP address and verify byte indices by slicing the source directly
     var ip_regex = try regex.compile(allocator, "\\b\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\b", .{});
     defer ip_regex.deinit();
 
@@ -48,6 +56,15 @@ pub fn main() !void {
         std.debug.print("Direct slice from indices: '{s}' (verified: {})\n", .{
             sliced,
             std.mem.eql(u8, ip_match.slice, sliced),
+        });
+    }
+
+    // 5. Resume scanning from a byte offset (useful for paginated chunks)
+    const second_half_offset = (log_data.len / 2);
+    if (tag_regex.find(log_data, .{ .startOffset = second_half_offset })) |tail_match| {
+        std.debug.print("First tag after byte {}: '{s}'\n", .{
+            second_half_offset,
+            tail_match.slice,
         });
     }
 }

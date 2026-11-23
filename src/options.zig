@@ -38,9 +38,9 @@ pub const CompileOptions = struct {
     /// Inverts the greediness of quantifiers ('U' flag).
     ungreedy: bool = false,
 
-    /// Use ASCII semantics for shorthand classes (\d, \w, \s) and boundaries.
-    /// Shorthand classes are ASCII in this release; the flag is accepted for
-    /// forward compatibility and does not affect dot or explicit Unicode classes.
+    /// Restrict shorthand classes (\d, \w, \s) and word boundaries (\b, \B) to
+    /// ASCII. By default these are Unicode-aware. Does not affect dot, explicit
+    /// character classes, or \p{…} property classes.
     ascii: bool = false,
 
     /// Safety and memory resource limits.

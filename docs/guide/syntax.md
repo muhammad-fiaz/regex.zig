@@ -48,23 +48,39 @@ UTF-8 codepoints, so multi-byte characters behave as single members:
 - `[\u{3040}-\u{309F}]`: Unicode codepoint ranges up to 21 bits.
 
 Negated classes also consume a complete character, so `[^a]` matches `"é"` as one
-match rather than two byte matches. With `caseInsensitive`, classes fold case for
-ASCII and the supported Latin-1, Greek, and Cyrillic blocks.
+match rather than two byte matches. With `caseInsensitive`, classes use full
+Unicode simple case folding.
 
 ### Predefined Character Shorthands
 
-| Shorthand | Meaning | ASCII Equivalent |
-| :--- | :--- | :--- |
-| `\d` | Digit | `[0-9]` |
-| `\D` | Non-digit | `[^0-9]` |
-| `\w` | Word character | `[a-zA-Z0-9_]` |
-| `\W` | Non-word character | `[^a-zA-Z0-9_]` |
-| `\s` | Whitespace | `[ \t\r\n\x0c\x0b]` |
-| `\S` | Non-whitespace | `[^ \t\r\n\x0c\x0b]` |
+By default these are Unicode-aware; set `.ascii = true` to restrict them to ASCII.
 
-Shorthand classes and `\b`/`\B` boundaries use ASCII semantics in this release.
-The `ascii` compile option is accepted for forward compatibility and does not
-change dot or explicit Unicode character classes.
+| Shorthand | Meaning | Unicode definition | ASCII mode |
+| :--- | :--- | :--- | :--- |
+| `\d` | Digit | `\p{Nd}` | `[0-9]` |
+| `\D` | Non-digit | `\P{Nd}` | `[^0-9]` |
+| `\w` | Word character | `\p{L}\p{M}\p{Nd}\p{Pc}` | `[a-zA-Z0-9_]` |
+| `\W` | Non-word character | complement of `\w` | `[^a-zA-Z0-9_]` |
+| `\s` | Whitespace | Unicode `White_Space` | `[ \t\r\n\x0c\x0b]` |
+| `\S` | Non-whitespace | complement of `\s` | `[^ \t\r\n\x0c\x0b]` |
+
+`\b`/`\B` word boundaries use the same word definition (Unicode by default, ASCII
+when `.ascii = true`) and are evaluated at character boundaries.
+
+### Unicode Property Classes
+
+`\p{…}` matches a codepoint with a Unicode property; `\P{…}` matches its complement.
+Both work standalone and inside bracket expressions (`[\p{L}\p{Nd}]`).
+
+- General categories: `Lu`, `Ll`, `Lt`, `Lm`, `Lo`, `Mn`, `Mc`, `Me`, `Nd`, `Nl`,
+  `No`, `Pc`, `Pd`, `Ps`, `Pe`, `Pi`, `Pf`, `Po`, `Sm`, `Sc`, `Sk`, `So`, `Zs`,
+  `Zl`, `Zp`, `Cc`, `Cf`, `Cs`, `Co`, `Cn`.
+- Grouped categories: `L` (Letter), `LC` (Cased_Letter), `M` (Mark), `N` (Number),
+  `P` (Punctuation), `S` (Symbol), `Z` (Separator), `C` (Other).
+- Binary property: `White_Space` (alias `space`).
+
+A single-letter form such as `\pL` is also accepted. Long names like `Letter`,
+`Number`, and `Punctuation` are aliases for the grouped categories.
 
 ### POSIX Character Classes
 
@@ -98,7 +114,8 @@ Quantifiers define how many times the preceding atom may match:
 - `$`: End of line (in multiline mode) or end of text.
 - `\A`: Absolute beginning of input string.
 - `\z`: Absolute end of input string.
-- `\b`: ASCII word boundary (`\w` adjacent to `\W` or string bounds).
+- `\b`: Word boundary (`\w` adjacent to `\W` or string bounds). Unicode-aware by
+  default; ASCII when `.ascii = true`.
 - `\B`: Non-word boundary.
 
 ---

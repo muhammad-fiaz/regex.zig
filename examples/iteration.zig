@@ -23,6 +23,23 @@ pub fn main() !void {
         });
     }
 
+    // Stop early without allocating a result array.
+    var early_it = kv_re.capturesIterator(text, .{});
+    std.debug.print("\nFirst two assignments only:\n", .{});
+    var taken: usize = 0;
+    while (taken < 2) : (taken += 1) {
+        const caps = early_it.next() orelse break;
+        std.debug.print("  {s}={s}\n", .{ caps.get(1).?, caps.get(2).? });
+    }
+
+    // Resume iteration from a known byte offset.
+    const z_offset = std.mem.indexOf(u8, text, "z=") orelse 0;
+    var tail_it = kv_re.capturesIterator(text, .{ .startOffset = z_offset });
+    std.debug.print("\nResuming at byte {}:\n", .{z_offset});
+    while (tail_it.next()) |caps| {
+        std.debug.print("  {s}={s}\n", .{ caps.get(1).?, caps.get(2).? });
+    }
+
     // Zero-length match progression example: finding word boundaries
     std.debug.print("\n--- Zero-Length Match Safe Progression ---\n", .{});
     var boundary_re = try regex.compile(allocator, "\\b", .{});

@@ -41,7 +41,7 @@ features:
   - title: Replacement & String Splitting
     details: Replace single or all matches expanding numbered ($1) and named (${name}) groups, and split strings across custom delimiter patterns.
   - title: Unicode & Case Folding
-    details: Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, ASCII shorthands, POSIX classes, scoped inline flags, and simple case folding for Latin-1, Greek, and Cyrillic.
+    details: Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, Unicode-aware shorthands and property classes (\p{L}, \p{Nd}), POSIX classes, scoped inline flags, and full Unicode simple case folding.
   - title: Safety & Resource Limits
     details: Configurable limits for pattern length, parenthesis nesting depth, compiled instruction count, and repetition bounds to prevent memory exhaustion.
   - title: Cross-Platform Portability

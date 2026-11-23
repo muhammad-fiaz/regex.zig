@@ -1,5 +1,5 @@
 const std = @import("std");
-const unicode = @import("unicode.zig");
+const ucd = @import("ucd.zig");
 
 /// Inclusive Unicode codepoint range [min, max].
 pub const Range = struct {
@@ -10,6 +10,16 @@ pub const Range = struct {
         return cp >= self.min and cp <= self.max;
     }
 };
+
+fn rangeLessThan(_: void, a: Range, b: Range) bool {
+    return a.min < b.min;
+}
+
+fn rangeOrder(cp: u21, r: Range) std.math.Order {
+    if (cp < r.min) return .lt;
+    if (cp > r.max) return .gt;
+    return .eq;
+}
 
 const BitSet = std.bit_set.Static(256);
 
@@ -76,10 +86,23 @@ pub const CharClass = struct {
             }
         }
 
+        // Normalize to sorted, merged ranges so membership is a binary search.
         const owned_ranges = try allocator.dupe(Range, ranges);
+        errdefer allocator.free(owned_ranges);
+        std.sort.pdq(Range, owned_ranges, {}, rangeLessThan);
+        var n: usize = 0;
+        for (owned_ranges) |r| {
+            if (n > 0 and r.min <= owned_ranges[n - 1].max + 1) {
+                owned_ranges[n - 1].max = @max(owned_ranges[n - 1].max, r.max);
+            } else {
+                owned_ranges[n] = r;
+                n += 1;
+            }
+        }
+        const merged = try allocator.realloc(owned_ranges, n);
 
         return CharClass{
-            .ranges = owned_ranges,
+            .ranges = merged,
             .is_negated = is_negated,
             .ascii_bitmap = bitmap,
             .has_non_ascii = non_ascii,
@@ -106,22 +129,19 @@ pub const CharClass = struct {
             return self.ascii_bitmap.isSet(@intCast(codepoint));
         }
         if (!self.has_non_ascii) return false;
-
-        for (self.ranges) |r| {
-            if (r.contains(codepoint)) return true;
-        }
-        return false;
+        return std.sort.binarySearch(Range, self.ranges, codepoint, rangeOrder) != null;
     }
 
     /// Check if a Unicode codepoint matches this character class.
     pub fn matches(self: CharClass, codepoint: u21) bool {
         var matched = self.matchesRaw(codepoint);
         if (!matched and self.caseless) {
-            const folded = unicode.simpleCaseFold(codepoint);
-            if (folded != codepoint) matched = self.matchesRaw(folded);
-            if (!matched) {
-                if (unicode.toOtherCase(codepoint)) |other| {
-                    matched = self.matchesRaw(other);
+            if (ucd.caselessEquivalents(codepoint)) |equivalents| {
+                for (equivalents) |peer| {
+                    if (self.matchesRaw(peer)) {
+                        matched = true;
+                        break;
+                    }
                 }
             }
         }

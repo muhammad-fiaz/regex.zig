@@ -1,4 +1,5 @@
 const std = @import("std");
+const ucd = @import("ucd.zig");
 
 /// Decoded Unicode codepoint and its UTF-8 byte length.
 pub const DecodedChar = struct {
@@ -45,20 +46,14 @@ pub fn eqlByteCaseless(a: u8, b: u8) bool {
     return std.ascii.toLower(a) == std.ascii.toLower(b);
 }
 
-/// Simple Unicode case fold mapping for codepoints.
+/// Simple Unicode case fold mapping for codepoints (full Unicode coverage).
 pub fn simpleCaseFold(cp: u21) u21 {
-    if (cp <= 127) {
-        return std.ascii.toLower(@intCast(cp));
-    }
-    // Latin-1 Supplement common folding
-    if (cp >= 0x00C0 and cp <= 0x00D6) return cp + 32;
-    if (cp >= 0x00D8 and cp <= 0x00DE) return cp + 32;
-    // Greek uppercase to lowercase
-    if (cp >= 0x0391 and cp <= 0x03A1) return cp + 32;
-    if (cp >= 0x03A3 and cp <= 0x03AB) return cp + 32;
-    // Cyrillic uppercase to lowercase
-    if (cp >= 0x0410 and cp <= 0x042F) return cp + 32;
-    return cp;
+    return ucd.simpleCaseFold(cp);
+}
+
+/// Static case-fold equivalence class of `cp`, or null when it folds to itself.
+pub fn caselessEquivalents(cp: u21) ?[]const u21 {
+    return ucd.caselessEquivalents(cp);
 }
 
 /// Return the opposite case counterpart for codepoint `cp` if one exists.

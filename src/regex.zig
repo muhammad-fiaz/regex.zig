@@ -611,6 +611,56 @@ test "unicode character classes decode complete codepoints" {
     try testing.expect(fold.isMatch("\xC3\x89", .{})); // É
 }
 
+test "unicode shorthands, properties, and boundaries" {
+    const testing = std.testing;
+
+    var word = try compile(testing.allocator, "\\w+", .{});
+    defer word.deinit();
+    try testing.expect(word.isMatch("\xC3\xA9", .{})); // é
+    try testing.expect(word.isMatch("\xE3\x81\x82", .{})); // あ
+    try testing.expect(!word.isMatch(" ", .{}));
+
+    var digit = try compile(testing.allocator, "\\d", .{});
+    defer digit.deinit();
+    try testing.expect(digit.isMatch("\xD9\xA0", .{})); // arabic-indic 0
+    try testing.expect(!digit.isMatch("a", .{}));
+
+    var space = try compile(testing.allocator, "\\s", .{});
+    defer space.deinit();
+    try testing.expect(space.isMatch("\xC2\xA0", .{})); // no-break space
+
+    var letter = try compile(testing.allocator, "\\p{L}", .{});
+    defer letter.deinit();
+    try testing.expect(letter.isMatch("\xE3\x81\x82", .{}));
+    try testing.expect(!letter.isMatch("1", .{}));
+
+    var not_letter = try compile(testing.allocator, "\\P{L}", .{});
+    defer not_letter.deinit();
+    try testing.expect(not_letter.isMatch("1", .{}));
+    try testing.expect(!not_letter.isMatch("a", .{}));
+
+    var in_class = try compile(testing.allocator, "[\\p{L}]+", .{});
+    defer in_class.deinit();
+    try testing.expect(in_class.isMatch("\xE3\x81\x82", .{}));
+
+    var non_word_class = try compile(testing.allocator, "[\\W]", .{});
+    defer non_word_class.deinit();
+    try testing.expect(non_word_class.isMatch(" ", .{}));
+    try testing.expect(!non_word_class.isMatch("\xE3\x81\x82", .{}));
+
+    var boundary = try compile(testing.allocator, "\\b\\w+\\b", .{});
+    defer boundary.deinit();
+    try testing.expect(boundary.isMatch("caf\xC3\xA9", .{}));
+
+    // The ascii option restricts shorthands and boundaries to ASCII.
+    var ascii_word = try compile(testing.allocator, "\\w", .{ .ascii = true });
+    defer ascii_word.deinit();
+    try testing.expect(ascii_word.isMatch("a", .{}));
+    try testing.expect(!ascii_word.isMatch("\xC3\xA9", .{}));
+
+    try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\p{Nope}", .{}));
+}
+
 test "pure literal shortcut preserves capturing groups" {
     const testing = std.testing;
     var re = try compile(testing.allocator, "(abc)", .{});

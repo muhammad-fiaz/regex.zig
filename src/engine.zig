@@ -11,6 +11,7 @@ const Captures = match_mod.Captures;
 const literal_mod = @import("literal.zig");
 const charset_mod = @import("charset.zig");
 const unicode_mod = @import("unicode.zig");
+const ucd = @import("ucd.zig");
 
 pub const MAX_CAPTURE_GROUPS = 32;
 pub const MAX_SLOTS = MAX_CAPTURE_GROUPS * 2;
@@ -348,7 +349,7 @@ pub const Engine = struct {
                 },
                 .empty_width => {
                     const ew_type: EmptyWidthType = @fromBackingInt(@intCast(inst.data));
-                    if (checkAssertion(ew_type, input, p)) {
+                    if (checkAssertion(ew_type, input, p, prog.flags.ascii)) {
                         inst_id = inst.out1;
                         continue;
                     }
@@ -673,7 +674,7 @@ pub const Engine = struct {
                 },
                 .empty_width => {
                     const ew_type: EmptyWidthType = @fromBackingInt(@intCast(inst.data));
-                    const holds = checkAssertion(ew_type, input, p);
+                    const holds = checkAssertion(ew_type, input, p, prog.flags.ascii);
                     if (holds) {
                         inst_id = inst.out1;
                         continue;
@@ -695,7 +696,23 @@ pub const Engine = struct {
         }
     }
 
-    fn checkAssertion(ew_type: EmptyWidthType, input: []const u8, p: usize) bool {
+    fn wordAt(input: []const u8, p: usize, ascii: bool) bool {
+        if (p >= input.len) return false;
+        if (ascii) return charset_mod.isWordByte(input[p]);
+        if (unicode_mod.decodeUtf8Char(input[p..])) |dec| return ucd.isWord(dec.cp);
+        return charset_mod.isWordByte(input[p]);
+    }
+
+    fn wordBefore(input: []const u8, p: usize, ascii: bool) bool {
+        if (p == 0) return false;
+        if (ascii) return charset_mod.isWordByte(input[p - 1]);
+        var start = p - 1;
+        while (start > 0 and unicode_mod.isUtf8Continuation(input[start])) start -= 1;
+        if (unicode_mod.decodeUtf8Char(input[start..p])) |dec| return ucd.isWord(dec.cp);
+        return charset_mod.isWordByte(input[p - 1]);
+    }
+
+    fn checkAssertion(ew_type: EmptyWidthType, input: []const u8, p: usize, ascii: bool) bool {
         switch (ew_type) {
             .start_text => return p == 0,
             .end_text => return p == input.len,
@@ -707,15 +724,16 @@ pub const Engine = struct {
                 if (p == input.len) return true;
                 return input[p] == '\n' or (input[p] == '\r' and p + 1 < input.len and input[p + 1] == '\n');
             },
-            .word_boundary => {
-                const prev_word = p > 0 and charset_mod.isWordByte(input[p - 1]);
-                const curr_word = p < input.len and charset_mod.isWordByte(input[p]);
-                return prev_word != curr_word;
-            },
-            .non_word_boundary => {
-                const prev_word = p > 0 and charset_mod.isWordByte(input[p - 1]);
-                const curr_word = p < input.len and charset_mod.isWordByte(input[p]);
-                return prev_word == curr_word;
+            .word_boundary, .non_word_boundary => {
+                // Boundaries are character-level; ignore positions inside a
+                // multi-byte sequence when operating in Unicode mode.
+                if (!ascii and p > 0 and p < input.len and unicode_mod.isUtf8Continuation(input[p])) {
+                    return false;
+                }
+                const prev_word = wordBefore(input, p, ascii);
+                const curr_word = wordAt(input, p, ascii);
+                const boundary = prev_word != curr_word;
+                return if (ew_type == .word_boundary) boundary else !boundary;
             },
         }
     }

@@ -20,11 +20,14 @@ pub const CompileOptions = struct {
     multiline: bool = false,
     dotAll: bool = false,
     ungreedy: bool = false,
-    /// ASCII shorthand semantics; accepted for forward compatibility.
+    /// Restrict \d, \w, \s and \b, \B to ASCII (Unicode-aware by default).
     ascii: bool = false,
     limits: Limits = .{},
 };
 ```
+
+`ascii` only affects the predefined shorthands and word boundaries. Dot, explicit
+bracket classes, and `\p{…}` property classes always operate on Unicode codepoints.
 
 ---
 

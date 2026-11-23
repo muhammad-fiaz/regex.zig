@@ -10,6 +10,7 @@ const CharClass = charset_mod.CharClass;
 const Bitmap256 = charset_mod.Bitmap256;
 const PosixClass = charset_mod.PosixClass;
 const unicode_mod = @import("unicode.zig");
+const ucd = @import("ucd.zig");
 const options_mod = @import("options.zig");
 const Options = options_mod.Options;
 const CompileFlags = options_mod.CompileFlags;
@@ -516,56 +517,27 @@ pub const Parser = struct {
             if (c == '\\' and self.pos + 1 < self.pattern.len) {
                 const esc_char = self.pattern[self.pos + 1];
                 switch (esc_char) {
-                    'd' => {
+                    'd', 'D', 'w', 'W', 's', 'S' => {
                         self.pos += 2;
-                        try ranges.append(alloc, .{ .min = '0', .max = '9' });
+                        const base = std.ascii.toLower(esc_char);
+                        const neg = esc_char != base;
+                        const src = self.shorthandSrc(base);
+                        if (neg) {
+                            const max_cp: u21 = if (self.options.ascii) 255 else 0x10FFFF;
+                            try appendComplement(alloc, src, &ranges, max_cp);
+                        } else {
+                            try appendCpRanges(alloc, src, &ranges);
+                        }
                         continue;
                     },
-                    'D' => {
+                    'p', 'P' => {
                         self.pos += 2;
-                        try ranges.append(alloc, .{ .min = 0, .max = '0' - 1 });
-                        try ranges.append(alloc, .{ .min = '9' + 1, .max = 255 });
-                        continue;
-                    },
-                    'w' => {
-                        self.pos += 2;
-                        try ranges.append(alloc, .{ .min = 'a', .max = 'z' });
-                        try ranges.append(alloc, .{ .min = 'A', .max = 'Z' });
-                        try ranges.append(alloc, .{ .min = '0', .max = '9' });
-                        try ranges.append(alloc, .{ .min = '_', .max = '_' });
-                        continue;
-                    },
-                    'W' => {
-                        self.pos += 2;
-                        var bm = Bitmap256.initFull();
-                        bm.setRange('a', 'z');
-                        bm.setRange('A', 'Z');
-                        bm.setRange('0', '9');
-                        bm.set('_');
-                        bm.invert();
-                        try appendBitmapRanges(alloc, &bm, &ranges);
-                        continue;
-                    },
-                    's' => {
-                        self.pos += 2;
-                        try ranges.append(alloc, .{ .min = ' ', .max = ' ' });
-                        try ranges.append(alloc, .{ .min = '\t', .max = '\t' });
-                        try ranges.append(alloc, .{ .min = '\r', .max = '\r' });
-                        try ranges.append(alloc, .{ .min = '\n', .max = '\n' });
-                        try ranges.append(alloc, .{ .min = 0x0c, .max = 0x0c });
-                        try ranges.append(alloc, .{ .min = 0x0b, .max = 0x0b });
-                        continue;
-                    },
-                    'S' => {
-                        self.pos += 2;
-                        var bm = Bitmap256.initFull();
-                        bm.clear(' ');
-                        bm.clear('\t');
-                        bm.clear('\r');
-                        bm.clear('\n');
-                        bm.clear(0x0c);
-                        bm.clear(0x0b);
-                        try appendBitmapRanges(alloc, &bm, &ranges);
+                        const src = try self.propertySrc();
+                        if (esc_char == 'P') {
+                            try appendComplement(alloc, src, &ranges, 0x10FFFF);
+                        } else {
+                            try appendCpRanges(alloc, src, &ranges);
+                        }
                         continue;
                     },
                     else => {},
@@ -633,6 +605,87 @@ pub const Parser = struct {
                 .max = @intCast(b - 1),
             });
         }
+    }
+
+    fn appendCpRanges(
+        alloc: std.mem.Allocator,
+        src: []const ucd.CpRange,
+        ranges: *std.ArrayList(Range),
+    ) Error!void {
+        for (src) |r| {
+            try ranges.append(alloc, .{ .min = r.lo, .max = r.hi });
+        }
+    }
+
+    /// Append the complement of sorted, merged `src` within [0, max_cp].
+    fn appendComplement(
+        alloc: std.mem.Allocator,
+        src: []const ucd.CpRange,
+        ranges: *std.ArrayList(Range),
+        max_cp: u21,
+    ) Error!void {
+        var cur: u32 = 0;
+        for (src) |r| {
+            if (r.lo > cur) {
+                try ranges.append(alloc, .{ .min = @intCast(cur), .max = @intCast(r.lo - 1) });
+            }
+            cur = @as(u32, r.hi) + 1;
+            if (cur > max_cp) return;
+        }
+        if (cur <= max_cp) {
+            try ranges.append(alloc, .{ .min = @intCast(cur), .max = max_cp });
+        }
+    }
+
+    /// Source ranges for a \d/\w/\s shorthand, honoring the ascii option.
+    fn shorthandSrc(self: *Parser, base: u8) []const ucd.CpRange {
+        if (!self.options.ascii) {
+            return switch (base) {
+                'd' => &ucd.digit_ranges,
+                'w' => &ucd.word_ranges,
+                's' => &ucd.space_ranges,
+                else => unreachable,
+            };
+        }
+        const S = struct {
+            const d = [_]ucd.CpRange{.{ .lo = '0', .hi = '9' }};
+            const w = [_]ucd.CpRange{
+                .{ .lo = '0', .hi = '9' }, .{ .lo = 'A', .hi = 'Z' },
+                .{ .lo = '_', .hi = '_' }, .{ .lo = 'a', .hi = 'z' },
+            };
+            const s = [_]ucd.CpRange{ .{ .lo = 0x09, .hi = 0x0D }, .{ .lo = 0x20, .hi = 0x20 } };
+        };
+        return switch (base) {
+            'd' => &S.d,
+            'w' => &S.w,
+            's' => &S.s,
+            else => unreachable,
+        };
+    }
+
+    /// Parse a \p property name (braced or single letter) and return its ranges.
+    fn propertySrc(self: *Parser) Error![]const ucd.CpRange {
+        const start = self.pos;
+        var name: []const u8 = undefined;
+        if (self.match('{')) {
+            const name_start = self.pos;
+            while (self.pos < self.pattern.len and self.pattern[self.pos] != '}') : (self.pos += 1) {}
+            if (self.pos >= self.pattern.len) {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "unclosed unicode property brace");
+            }
+            name = self.pattern[name_start..self.pos];
+            self.pos += 1; // consume '}'
+        } else {
+            if (self.pos >= self.pattern.len) {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "empty unicode property name");
+            }
+            name = self.pattern[self.pos .. self.pos + 1];
+            self.pos += 1;
+        }
+        const prop = ucd.lookupProperty(name) orelse {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "unknown unicode property name");
+        };
+        return ucd.propertyRanges(prop);
     }
 
     fn parseCharClassItem(self: *Parser) Error!u21 {
@@ -752,6 +805,9 @@ pub const Parser = struct {
             'd', 'D', 'w', 'W', 's', 'S' => {
                 return self.parseShorthandClass(c);
             },
+            // Unicode property classes
+            'p' => return self.parsePropertyClass(false),
+            'P' => return self.parsePropertyClass(true),
             // Backreferences: unsupported
             '1'...'9' => {
                 return self.fail(error.UnsupportedBackreference, .unsupported, esc_start, "backreferences are unsupported in linear-time v0.0.2 engine");
@@ -817,52 +873,30 @@ pub const Parser = struct {
 
     fn parseShorthandClass(self: *Parser, c: u8) Error!*Node {
         const alloc = self.arena.allocator();
+        const base = std.ascii.toLower(c);
+        const is_neg = c != base;
+        const src = self.shorthandSrc(base);
+
         var ranges: std.ArrayList(Range) = .empty;
         defer ranges.deinit(alloc);
-
-        var is_neg = false;
-        switch (c) {
-            'd' => {
-                try ranges.append(alloc, .{ .min = '0', .max = '9' });
-            },
-            'D' => {
-                try ranges.append(alloc, .{ .min = '0', .max = '9' });
-                is_neg = true;
-            },
-            'w' => {
-                try ranges.append(alloc, .{ .min = 'a', .max = 'z' });
-                try ranges.append(alloc, .{ .min = 'A', .max = 'Z' });
-                try ranges.append(alloc, .{ .min = '0', .max = '9' });
-                try ranges.append(alloc, .{ .min = '_', .max = '_' });
-            },
-            'W' => {
-                try ranges.append(alloc, .{ .min = 'a', .max = 'z' });
-                try ranges.append(alloc, .{ .min = 'A', .max = 'Z' });
-                try ranges.append(alloc, .{ .min = '0', .max = '9' });
-                try ranges.append(alloc, .{ .min = '_', .max = '_' });
-                is_neg = true;
-            },
-            's' => {
-                try ranges.append(alloc, .{ .min = ' ', .max = ' ' });
-                try ranges.append(alloc, .{ .min = '\t', .max = '\t' });
-                try ranges.append(alloc, .{ .min = '\r', .max = '\r' });
-                try ranges.append(alloc, .{ .min = '\n', .max = '\n' });
-                try ranges.append(alloc, .{ .min = 0x0c, .max = 0x0c });
-                try ranges.append(alloc, .{ .min = 0x0b, .max = 0x0b });
-            },
-            'S' => {
-                try ranges.append(alloc, .{ .min = ' ', .max = ' ' });
-                try ranges.append(alloc, .{ .min = '\t', .max = '\t' });
-                try ranges.append(alloc, .{ .min = '\r', .max = '\r' });
-                try ranges.append(alloc, .{ .min = '\n', .max = '\n' });
-                try ranges.append(alloc, .{ .min = 0x0c, .max = 0x0c });
-                try ranges.append(alloc, .{ .min = 0x0b, .max = 0x0b });
-                is_neg = true;
-            },
-            else => unreachable,
-        }
+        try appendCpRanges(alloc, src, &ranges);
 
         var cc = try CharClass.init(alloc, ranges.items, is_neg);
+        cc.caseless = self.current_flags.caseless;
+        const node = try alloc.create(Node);
+        node.* = .{ .char_class = cc };
+        return node;
+    }
+
+    fn parsePropertyClass(self: *Parser, negated: bool) Error!*Node {
+        const alloc = self.arena.allocator();
+        const src = try self.propertySrc();
+
+        var ranges: std.ArrayList(Range) = .empty;
+        defer ranges.deinit(alloc);
+        try appendCpRanges(alloc, src, &ranges);
+
+        var cc = try CharClass.init(alloc, ranges.items, negated);
         cc.caseless = self.current_flags.caseless;
         const node = try alloc.create(Node);
         node.* = .{ .char_class = cc };

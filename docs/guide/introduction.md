@@ -31,7 +31,7 @@ It provides everything needed to build fast, secure, and reliable text-processin
 | **Linear-Time PikeVM** | Guaranteed $O(M \times N)$ matching time. Threads advance in lockstep across dual queues with $O(1)$ state deduplication. |
 | **Submatch & Named Captures** | Extract 32 inline capture slots (full match + 31 groups) with zero heap allocations during search, plus named groups `(?P&lt;name&gt;...)` and `(?&lt;name&gt;...)`. |
 | **Literal Prefilter Acceleration** | Automatically extracts literal prefixes from patterns to perform fast substring searches, skipping NFA execution when the prefix does not match. |
-| **Unicode & UTF-8 Support** | Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, ASCII shorthands (`\d`, `\w`, `\s`), POSIX bracket classes (`[:alnum:]`), scoped inline flags, and simple case-folding for Latin-1, Greek, and Cyrillic. |
+| **Unicode & UTF-8 Support** | Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, Unicode-aware shorthands (`\d`, `\w`, `\s`) with an `ascii` toggle, Unicode property classes (`\p{L}`, `\p{Nd}`), POSIX bracket classes (`[:alnum:]`), scoped inline flags, and full Unicode simple case folding. |
 | **Replacement Subsystem** | Replace first or all matches with template expansion supporting numbered groups (`$0`, `$1`) and named groups (`${name}`). |
 | **Splitting & Tokenization** | Split input strings across arbitrary regular expression delimiters into allocated slices. |
 | **Safe Streaming Iterators** | Advance past zero-length matches safely without entering infinite loops. |
