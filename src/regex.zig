@@ -294,7 +294,7 @@ pub const Regex = struct {
 
         while (true) {
             if (options.maxSplits) |limit| {
-                if (split_count + 1 >= limit) break;
+                if (split_count >= limit) break;
             }
             const m = it.next() orelse break;
             try list.append(allocator, input[last_idx..m.start]);
@@ -439,7 +439,15 @@ test "public api split" {
 
     const parts_limited = try re.split(testing.allocator, "one, two; three   four", .{ .maxSplits = 2 });
     defer testing.allocator.free(parts_limited);
-    try testing.expectEqual(@as(usize, 2), parts_limited.len);
+    try testing.expectEqual(@as(usize, 3), parts_limited.len);
+    try testing.expectEqualStrings("one", parts_limited[0]);
+    try testing.expectEqualStrings("two", parts_limited[1]);
+    try testing.expectEqualStrings("three   four", parts_limited[2]);
+
+    const no_splits = try re.split(testing.allocator, "one, two", .{ .maxSplits = 0 });
+    defer testing.allocator.free(no_splits);
+    try testing.expectEqual(@as(usize, 1), no_splits.len);
+    try testing.expectEqualStrings("one, two", no_splits[0]);
 }
 
 test "public api count and iterator" {
@@ -806,6 +814,28 @@ test "extended escape forms and quoting" {
     try testing.expectEqualStrings("a-d", quoted_class.find("a-d", .{}).?.slice);
     try testing.expect(!quoted_class.isMatch("b", .{}));
 
+    // A quantifier after \Q...\E binds only to the final quoted character.
+    var quoted_star = try compile(testing.allocator, "\\Qab\\E*", .{});
+    defer quoted_star.deinit();
+    try testing.expectEqualStrings("abb", quoted_star.find("abb", .{}).?.slice);
+    try testing.expectEqualStrings("ab", quoted_star.find("abab", .{}).?.slice);
+    try testing.expectEqualStrings("a", quoted_star.find("a", .{}).?.slice);
+
+    var quoted_plus = try compile(testing.allocator, "\\Qab\\E+", .{});
+    defer quoted_plus.deinit();
+    try testing.expectEqualStrings("ab", quoted_plus.find("aab", .{}).?.slice);
+    try testing.expectEqualStrings("abb", quoted_plus.find("abb", .{}).?.slice);
+
+    var quoted_count = try compile(testing.allocator, "\\Qab\\E{2}", .{});
+    defer quoted_count.deinit();
+    try testing.expectEqualStrings("abb", quoted_count.find("abb", .{}).?.slice);
+    try testing.expect(!quoted_count.isMatch("ab", .{}));
+
+    // A single multibyte quoted character keeps the quantifier on the character.
+    var quoted_multibyte = try compile(testing.allocator, "\\Q\xC3\xA9\\E*", .{});
+    defer quoted_multibyte.deinit();
+    try testing.expectEqualStrings("\xC3\xA9\xC3\xA9", quoted_multibyte.find("\xC3\xA9\xC3\xA9", .{}).?.slice);
+
     var comment = try compile(testing.allocator, "(?#ignore this)abc", .{});
     defer comment.deinit();
     try testing.expect(comment.isMatch("abc", .{}));
@@ -909,12 +939,37 @@ test "invalid constructs are rejected" {
     const testing = std.testing;
     try testing.expectError(error.UnexpectedCharacter, compile(testing.allocator, "(?)", .{}));
     try testing.expectError(error.UnexpectedCharacter, compile(testing.allocator, "(?-)", .{}));
-    try testing.expectError(error.InvalidQuantifier, compile(testing.allocator, "^*", .{}));
     try testing.expectError(error.InvalidGroupName, compile(testing.allocator, "(?P<1a>x)", .{}));
     try testing.expectError(error.UnsupportedBackreference, compile(testing.allocator, "(?P=a)", .{}));
     try testing.expectError(error.UnsupportedConstruct, compile(testing.allocator, "\\G", .{}));
     try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\uD800", .{}));
     try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\x{110000}", .{}));
+}
+
+test "quantified zero-width assertions" {
+    const testing = std.testing;
+
+    var word_star = try compile(testing.allocator, "\\b*", .{});
+    defer word_star.deinit();
+    try testing.expectEqual(@as(usize, 0), word_star.find("abc", .{}).?.start);
+    try testing.expectEqual(@as(usize, 0), word_star.find("abc", .{}).?.end);
+
+    var word_plus = try compile(testing.allocator, "\\b+", .{});
+    defer word_plus.deinit();
+    try testing.expectEqual(@as(usize, 0), word_plus.find("abc", .{}).?.start);
+
+    var start_plus = try compile(testing.allocator, "^+", .{});
+    defer start_plus.deinit();
+    try testing.expectEqual(@as(usize, 0), start_plus.find("abc", .{}).?.start);
+
+    var end_plus = try compile(testing.allocator, "$+", .{});
+    defer end_plus.deinit();
+    try testing.expectEqual(@as(usize, 3), end_plus.find("abc", .{}).?.start);
+    try testing.expectEqual(@as(usize, 3), end_plus.find("abc", .{}).?.end);
+
+    var empty_star = try compile(testing.allocator, "()*", .{});
+    defer empty_star.deinit();
+    try testing.expectEqual(@as(usize, 0), empty_star.find("x", .{}).?.start);
 }
 
 test "braced numeric replacement tokens" {

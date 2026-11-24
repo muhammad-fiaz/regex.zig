@@ -133,6 +133,9 @@ Quantifiers define how many times the preceding atom may match:
   default; ASCII when `.ascii = true`.
 - `\B`: Non-word boundary.
 
+Zero-width assertions and empty groups may be quantified (`\b*`, `^+`, `()?`); the
+NFA treats the repetition as a zero-width loop, matching RE2/Go behavior.
+
 ---
 
 ## Grouping & Captures

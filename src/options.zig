@@ -102,6 +102,9 @@ pub const ReplaceAllOptions = struct {
 /// Options for splitting text by regex matches (split).
 pub const SplitOptions = struct {
     startOffset: usize = 0,
+    /// Maximum number of delimiters to consume. The unconsumed remainder of the
+    /// input becomes the final field, so `maxSplits = n` yields at most `n + 1`
+    /// fields. `0` performs no splits; `null` splits on every match.
     maxSplits: ?usize = null,
 };
 

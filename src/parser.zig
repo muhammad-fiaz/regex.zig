@@ -211,7 +211,6 @@ pub const Parser = struct {
     }
 
     fn parseQuantified(self: *Parser) Error!*Node {
-        const atom_start = self.pos;
         const atom = try self.parseAtom();
         self.skipIgnored();
 
@@ -234,15 +233,40 @@ pub const Parser = struct {
         }
 
         if (rep) |r| {
-            switch (atom.*) {
-                .anchor, .empty => return self.fail(
-                    error.InvalidQuantifier,
-                    .syntax,
-                    atom_start,
-                    "quantifier cannot be applied to a zero-width assertion or empty group",
-                ),
-                else => {},
+            // Zero-width assertions and empty groups may be quantified, as in
+            // RE2/Go (`\b*`, `^*`, `(?:)*`). The NFA's visited set prevents the
+            // resulting epsilon cycles from looping.
+
+            // A quoted literal such as `\Qab\E` is a single AST node, but a
+            // following quantifier binds only to its final character (Go and
+            // Perl semantics): `\Qab\E*` == `a b*`. Split multi-codepoint
+            // literals so the repetition applies to the last codepoint only.
+            if (atom.* == .literal) {
+                const lit = atom.literal;
+                const split = lastCodepointOffset(lit.bytes);
+                if (split > 0) {
+                    const alloc = self.arena.allocator();
+                    const prefix_node = try alloc.create(Node);
+                    prefix_node.* = .{ .literal = .{
+                        .bytes = lit.bytes[0..split],
+                        .caseless = lit.caseless,
+                    } };
+                    const last_node = try alloc.create(Node);
+                    last_node.* = .{ .literal = .{
+                        .bytes = lit.bytes[split..],
+                        .caseless = lit.caseless,
+                    } };
+                    const qnode = try alloc.create(Node);
+                    qnode.* = .{ .quantifier = .{ .child = last_node, .rep = r } };
+                    const parts = try alloc.alloc(*Node, 2);
+                    parts[0] = prefix_node;
+                    parts[1] = qnode;
+                    const concat_node = try alloc.create(Node);
+                    concat_node.* = .{ .concat = parts };
+                    return concat_node;
+                }
             }
+
             const alloc = self.arena.allocator();
             const qnode = try alloc.create(Node);
             qnode.* = .{
@@ -255,6 +279,22 @@ pub const Parser = struct {
         }
 
         return atom;
+    }
+
+    /// Byte offset of the final UTF-8 codepoint in `bytes`; 0 when `bytes` holds
+    /// at most one codepoint (or is empty).
+    fn lastCodepointOffset(bytes: []const u8) usize {
+        var off: usize = 0;
+        var last: usize = 0;
+        while (off < bytes.len) {
+            last = off;
+            if (unicode_mod.decodeUtf8Char(bytes[off..])) |dec| {
+                off += dec.len;
+            } else {
+                off += 1;
+            }
+        }
+        return last;
     }
 
     fn greedinessAfterQuantifier(self: *Parser) bool {
@@ -368,10 +408,14 @@ pub const Parser = struct {
                 return self.parseEscape();
             },
             else => {
-                // Literal character/UTF-8 sequence
-                const seq_len = unicode_mod.utf8SequenceLength(b);
-                const actual_len = @min(seq_len, self.pattern.len - start_pos);
-                self.pos += actual_len;
+                // Literal character/UTF-8 sequence. Decode a complete codepoint
+                // so multibyte characters stay intact; invalid bytes are treated
+                // literally one at a time.
+                if (unicode_mod.decodeUtf8Char(self.pattern[start_pos..])) |dec| {
+                    self.pos += dec.len;
+                } else {
+                    self.pos += 1;
+                }
                 const lit_slice = try alloc.dupe(u8, self.pattern[start_pos..self.pos]);
                 const node = try alloc.create(Node);
                 node.* = .{ .literal = .{

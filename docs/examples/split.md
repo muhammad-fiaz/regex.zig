@@ -83,9 +83,10 @@ Splitting 'alpha, beta;  gamma   delta,epsilon' into 5 tokens:
   [4] 'delta'
   [5] 'epsilon'
 
-With maxSplits = 2 (2 fields):
+With maxSplits = 2 (3 fields):
   [1] 'alpha'
-  [2] 'beta;  gamma   delta,epsilon'
+  [2] 'beta'
+  [3] 'gamma   delta,epsilon'
 
 Empty fields preserved (4 fields):
   [1] 'a'
@@ -104,7 +105,7 @@ Extracted non-tag sections:
 
 ## Limits and empty fields
 
-With `.maxSplits = 2`, only the first delimiter is consumed and the rest of the input stays in the final field. Splitting `a,,b,` on a literal comma keeps the empty fields, yielding four entries; empty fields are preserved rather than dropped.
+With `.maxSplits = 2`, only the first two delimiters are consumed and the rest of the input stays in the final field, producing `alpha`, `beta`, and `gamma   delta,epsilon`. Splitting `a,,b,` on a literal comma keeps the empty fields, yielding four entries; empty fields are preserved rather than dropped.
 
 ## Tag stripping
 

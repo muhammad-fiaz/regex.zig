@@ -96,6 +96,8 @@ pub const ReplaceAllOptions = struct {
 ```zig
 pub const SplitOptions = struct {
     startOffset: usize = 0,
+    /// Maximum number of delimiters to consume; the remainder becomes the final
+    /// field, so `n` splits yield at most `n + 1` fields.
     maxSplits: ?usize = null,
 };
 ```

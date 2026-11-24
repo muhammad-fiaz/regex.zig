@@ -107,6 +107,54 @@ pub const Scratch = struct {
 };
 
 pub const Engine = struct {
+    const CharMatch = struct { ok: bool = false, len: usize = 1 };
+
+    /// Evaluate a single consuming instruction against `input[p]`. Multibyte
+    /// characters report their full UTF-8 length so callers can skip the
+    /// continuation bytes.
+    inline fn matchChar(prog: *const Prog, inst: Inst, input: []const u8, p: usize) CharMatch {
+        const c = input[p];
+        switch (inst.op) {
+            .byte => return .{
+                .ok = if (inst.isCaseless())
+                    unicode_mod.eqlByteCaseless(c, @intCast(inst.data))
+                else
+                    c == @as(u8, @intCast(inst.data)),
+            },
+            .byte_range => {
+                const lo: u8 = @intCast(inst.data & 0xFF);
+                const hi: u8 = @intCast((inst.data >> 8) & 0xFF);
+                if (inst.isCaseless()) {
+                    const cl = unicode_mod.toLowerAscii(c);
+                    return .{ .ok = cl >= unicode_mod.toLowerAscii(lo) and cl <= unicode_mod.toLowerAscii(hi) };
+                }
+                return .{ .ok = c >= lo and c <= hi };
+            },
+            .any_char => {
+                if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
+                    return .{ .ok = true, .len = unicode_mod.charLengthAt(input, p) };
+                }
+                return .{};
+            },
+            .any_char_non_nl => {
+                if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
+                    if (c != '\n') return .{ .ok = true, .len = unicode_mod.charLengthAt(input, p) };
+                }
+                return .{};
+            },
+            .char_class => {
+                if (p > 0 and unicode_mod.isUtf8Continuation(c)) return .{};
+                const cc = prog.char_classes[inst.data];
+                if (c < 0x80) return .{ .ok = cc.matchesByte(c) };
+                if (unicode_mod.decodeUtf8Char(input[p..])) |dec| {
+                    return .{ .ok = cc.matches(dec.cp), .len = dec.len };
+                }
+                return .{ .ok = cc.matchesByte(c) };
+            },
+            else => return .{},
+        }
+    }
+
     /// Ultra-fast boolean matching: tests whether `prog` matches anywhere in `input`.
     pub fn matchExists(
         prog: *const Prog,
@@ -135,29 +183,17 @@ pub const Engine = struct {
             return matchExistsAt(prog, scratch, input, start_pos);
         }
 
-        // Scanning loop across starting positions
-        var pos = start_pos;
-        while (pos <= input.len) {
-            // Literal prefix acceleration if available and unanchored
-            if (prog.literal_prefix) |prefix| {
-                if (prefix.len > 0) {
-                    if (input.len < pos + prefix.len) return false;
-                    if (literal_mod.findLiteralPos(input, prefix, pos, prog.literal_prefix_caseless)) |cand| {
-                        pos = cand;
-                    } else {
-                        return false;
-                    }
-                }
+        // A match must start with the literal prefix; if it never occurs in the
+        // remaining input, no start position can succeed.
+        if (prog.literal_prefix) |prefix| {
+            if (prefix.len > 0 and
+                literal_mod.findLiteralPos(input, prefix, start_pos, prog.literal_prefix_caseless) == null)
+            {
+                return false;
             }
-
-            if (matchExistsAt(prog, scratch, input, pos)) {
-                return true;
-            }
-
-            pos += 1;
         }
 
-        return false;
+        return matchExistsUnanchored(prog, scratch, input, start_pos);
     }
 
     fn matchExistsAt(
@@ -189,7 +225,6 @@ pub const Engine = struct {
 
         var p = start_pos;
         while (p < input.len and curr_len > 0) {
-            const c = input[p];
             next_len = 0;
             const next_gen = scratch.nextGeneration();
 
@@ -215,61 +250,11 @@ pub const Engine = struct {
                 }
 
                 const inst = prog.insts[thread.inst_id];
-                var matched = false;
-                var char_len: usize = 1;
-
-                switch (inst.op) {
-                    .byte => {
-                        if (inst.isCaseless()) {
-                            matched = unicode_mod.eqlByteCaseless(c, @intCast(inst.data));
-                        } else {
-                            matched = (c == @as(u8, @intCast(inst.data)));
-                        }
-                    },
-                    .byte_range => {
-                        const lo: u8 = @intCast(inst.data & 0xFF);
-                        const hi: u8 = @intCast((inst.data >> 8) & 0xFF);
-                        if (inst.isCaseless()) {
-                            const cl = unicode_mod.toLowerAscii(c);
-                            matched = (cl >= unicode_mod.toLowerAscii(lo) and cl <= unicode_mod.toLowerAscii(hi));
-                        } else {
-                            matched = (c >= lo and c <= hi);
-                        }
-                    },
-                    .any_char => {
-                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
-                            matched = true;
-                            char_len = unicode_mod.charLengthAt(input, p);
-                        }
-                    },
-                    .any_char_non_nl => {
-                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
-                            matched = (c != '\n');
-                            if (matched) char_len = unicode_mod.charLengthAt(input, p);
-                        }
-                    },
-                    .char_class => {
-                        const cc = prog.char_classes[inst.data];
-                        if (p > 0 and unicode_mod.isUtf8Continuation(c)) {
-                            matched = false;
-                        } else if (c < 0x80) {
-                            matched = cc.matchesByte(c);
-                        } else if (unicode_mod.decodeUtf8Char(input[p..])) |dec| {
-                            matched = cc.matches(dec.cp);
-                            char_len = dec.len;
-                        } else {
-                            matched = cc.matchesByte(c);
-                        }
-                    },
-                    .match => {
-                        return true;
-                    },
-                    else => {},
-                }
-
-                if (matched) {
-                    if (char_len > 1) {
-                        enqueueBoolThread(&scratch.bool_next, &next_len, inst.out1, @intCast(char_len - 1));
+                if (inst.op == .match) return true;
+                const bm = matchChar(prog, inst, input, p);
+                if (bm.ok) {
+                    if (bm.len > 1) {
+                        enqueueBoolThread(&scratch.bool_next, &next_len, inst.out1, @intCast(bm.len - 1));
                     } else {
                         addBoolThread(
                             prog,
@@ -282,8 +267,8 @@ pub const Engine = struct {
                             p + 1,
                             next_gen,
                         );
+                        if (matched_early) return true;
                     }
-                    if (matched_early) return true;
                 }
             }
 
@@ -297,6 +282,116 @@ pub const Engine = struct {
         }
 
         // Process any remaining match threads at end of input
+        for (scratch.bool_curr[0..curr_len]) |thread| {
+            if (thread.skip == 0 and prog.insts[thread.inst_id].op == .match) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// Single-pass unanchored search: rather than restarting the NFA at every
+    /// start position (quadratic on inputs where a long prefix of the pattern
+    /// keeps failing), a fresh start thread is injected after each input byte.
+    /// This keeps the total work bounded by O(instructions ├ù input length).
+    fn matchExistsUnanchored(
+        prog: *const Prog,
+        scratch: *Scratch,
+        input: []const u8,
+        start_pos: usize,
+    ) bool {
+        var curr_len: usize = 0;
+        var next_len: usize = 0;
+        var matched_early = false;
+
+        const gen = scratch.nextGeneration();
+        addBoolThread(
+            prog,
+            scratch,
+            &scratch.bool_curr,
+            &curr_len,
+            &matched_early,
+            prog.start_inst,
+            input,
+            start_pos,
+            gen,
+        );
+        if (matched_early) return true;
+
+        var p = start_pos;
+        while (p < input.len) {
+            next_len = 0;
+            const next_gen = scratch.nextGeneration();
+
+            if (curr_len > 0) {
+                for (scratch.bool_curr[0..curr_len]) |thread| {
+                    if (thread.skip > 0) {
+                        if (thread.skip > 1) {
+                            enqueueBoolThread(&scratch.bool_next, &next_len, thread.inst_id, thread.skip - 1);
+                        } else {
+                            addBoolThread(
+                                prog,
+                                scratch,
+                                &scratch.bool_next,
+                                &next_len,
+                                &matched_early,
+                                thread.inst_id,
+                                input,
+                                p + 1,
+                                next_gen,
+                            );
+                            if (matched_early) return true;
+                        }
+                        continue;
+                    }
+
+                    const inst = prog.insts[thread.inst_id];
+                    if (inst.op == .match) return true;
+                    const bm = matchChar(prog, inst, input, p);
+                    if (bm.ok) {
+                        if (bm.len > 1) {
+                            enqueueBoolThread(&scratch.bool_next, &next_len, inst.out1, @intCast(bm.len - 1));
+                        } else {
+                            addBoolThread(
+                                prog,
+                                scratch,
+                                &scratch.bool_next,
+                                &next_len,
+                                &matched_early,
+                                inst.out1,
+                                input,
+                                p + 1,
+                                next_gen,
+                            );
+                            if (matched_early) return true;
+                        }
+                    }
+                }
+            }
+
+            // Inject a fresh start thread for the next position.
+            addBoolThread(
+                prog,
+                scratch,
+                &scratch.bool_next,
+                &next_len,
+                &matched_early,
+                prog.start_inst,
+                input,
+                p + 1,
+                next_gen,
+            );
+            if (matched_early) return true;
+
+            const temp = scratch.bool_curr;
+            scratch.bool_curr = scratch.bool_next;
+            scratch.bool_next = temp;
+            curr_len = next_len;
+
+            p += 1;
+        }
+
         for (scratch.bool_curr[0..curr_len]) |thread| {
             if (thread.skip == 0 and prog.insts[thread.inst_id].op == .match) {
                 return true;
@@ -403,30 +498,17 @@ pub const Engine = struct {
             return runAt(prog, scratch, input, start_pos);
         }
 
-        // Scanning loop across starting positions
-        var pos = start_pos;
-        while (pos <= input.len) {
-            // Literal prefix acceleration if available and unanchored
-            if (prog.literal_prefix) |prefix| {
-                if (prefix.len > 0) {
-                    if (input.len < pos + prefix.len) return null;
-                    if (literal_mod.findLiteralPos(input, prefix, pos, prog.literal_prefix_caseless)) |cand| {
-                        pos = cand;
-                    } else {
-                        // Prefix never occurs in remainder of input
-                        return null;
-                    }
-                }
+        // A match must start with the literal prefix; if it never occurs in the
+        // remaining input, no start position can succeed.
+        if (prog.literal_prefix) |prefix| {
+            if (prefix.len > 0 and
+                literal_mod.findLiteralPos(input, prefix, start_pos, prog.literal_prefix_caseless) == null)
+            {
+                return null;
             }
-
-            if (runAt(prog, scratch, input, pos)) |caps| {
-                return caps;
-            }
-
-            pos += 1;
         }
 
-        return null;
+        return searchUnanchored(prog, scratch, input, start_pos);
     }
 
     fn runAt(
@@ -469,7 +551,6 @@ pub const Engine = struct {
 
         var p = start_pos;
         while (p < input.len and curr_len > 0) {
-            const c = input[p];
             next_len = 0;
             const next_gen = scratch.nextGeneration();
 
@@ -496,64 +577,16 @@ pub const Engine = struct {
                 }
 
                 const inst = prog.insts[t.inst_id];
-                var matched = false;
-                var char_len: usize = 1;
-
-                switch (inst.op) {
-                    .byte => {
-                        if (inst.isCaseless()) {
-                            matched = unicode_mod.eqlByteCaseless(c, @intCast(inst.data));
-                        } else {
-                            matched = (c == @as(u8, @intCast(inst.data)));
-                        }
-                    },
-                    .byte_range => {
-                        const lo: u8 = @intCast(inst.data & 0xFF);
-                        const hi: u8 = @intCast((inst.data >> 8) & 0xFF);
-                        if (inst.isCaseless()) {
-                            const cl = unicode_mod.toLowerAscii(c);
-                            matched = (cl >= unicode_mod.toLowerAscii(lo) and cl <= unicode_mod.toLowerAscii(hi));
-                        } else {
-                            matched = (c >= lo and c <= hi);
-                        }
-                    },
-                    .any_char => {
-                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
-                            matched = true;
-                            char_len = unicode_mod.charLengthAt(input, p);
-                        }
-                    },
-                    .any_char_non_nl => {
-                        if (p == 0 or !unicode_mod.isUtf8Continuation(c)) {
-                            matched = (c != '\n');
-                            if (matched) char_len = unicode_mod.charLengthAt(input, p);
-                        }
-                    },
-                    .char_class => {
-                        const cc = prog.char_classes[inst.data];
-                        if (p > 0 and unicode_mod.isUtf8Continuation(c)) {
-                            matched = false;
-                        } else if (c < 0x80) {
-                            matched = cc.matchesByte(c);
-                        } else if (unicode_mod.decodeUtf8Char(input[p..])) |dec| {
-                            matched = cc.matches(dec.cp);
-                            char_len = dec.len;
-                        } else {
-                            matched = cc.matchesByte(c);
-                        }
-                    },
-                    .match => {
-                        var match_slots: [MAX_SLOTS]usize = undefined;
-                        @memcpy(match_slots[0..num_slots], t.slots[0..num_slots]);
-                        best_match_slots = match_slots;
-                        break;
-                    },
-                    else => {},
+                if (inst.op == .match) {
+                    var match_slots: [MAX_SLOTS]usize = undefined;
+                    @memcpy(match_slots[0..num_slots], t.slots[0..num_slots]);
+                    best_match_slots = match_slots;
+                    break;
                 }
-
-                if (matched) {
-                    if (char_len > 1) {
-                        enqueuePendingThread(&scratch.next_queue, &next_len, inst.out1, @intCast(char_len - 1), &t.slots, num_slots);
+                const bm = matchChar(prog, inst, input, p);
+                if (bm.ok) {
+                    if (bm.len > 1) {
+                        enqueuePendingThread(&scratch.next_queue, &next_len, inst.out1, @intCast(bm.len - 1), &t.slots, num_slots);
                     } else {
                         addThread(
                             prog,
@@ -582,6 +615,150 @@ pub const Engine = struct {
         }
 
         // Process any remaining match threads at end of input
+        for (scratch.curr_queue[0..curr_len]) |*t| {
+            if (t.skip == 0 and prog.insts[t.inst_id].op == .match) {
+                var match_slots: [MAX_SLOTS]usize = undefined;
+                @memcpy(match_slots[0..num_slots], t.slots[0..num_slots]);
+                best_match_slots = match_slots;
+                break;
+            }
+        }
+
+        if (best_match_slots) |slots| {
+            return makeCaptures(prog, input, slots);
+        }
+
+        return null;
+    }
+
+    /// Single-pass unanchored search with capture tracking. A new start thread is
+    /// injected after each input byte, so earlier start positions keep higher
+    /// priority and the whole search is O(instructions ├ù input length) instead
+    /// of restarting the NFA at every position.
+    fn searchUnanchored(
+        prog: *const Prog,
+        scratch: *Scratch,
+        input: []const u8,
+        start_pos: usize,
+    ) ?Captures {
+        var curr_len: usize = 0;
+        var next_len: usize = 0;
+
+        const num_slots = @min(MAX_SLOTS, (prog.capture_count + 1) * 2);
+
+        var init_slots: [MAX_SLOTS]usize = undefined;
+        @memset(init_slots[0..num_slots], UNSET_SLOT);
+        init_slots[0] = start_pos;
+
+        var best_match_slots: ?[MAX_SLOTS]usize = null;
+
+        const gen = scratch.nextGeneration();
+        addThread(
+            prog,
+            scratch,
+            &scratch.curr_queue,
+            &curr_len,
+            &best_match_slots,
+            prog.start_inst,
+            &init_slots,
+            input,
+            start_pos,
+            gen,
+            num_slots,
+        );
+
+        var p = start_pos;
+        while (p < input.len) {
+            // Once a match is locked in and no higher-priority threads remain,
+            // nothing later can override it.
+            if (best_match_slots != null and curr_len == 0) break;
+
+            next_len = 0;
+            const next_gen = scratch.nextGeneration();
+
+            if (curr_len > 0) {
+                for (scratch.curr_queue[0..curr_len]) |*t| {
+                    if (t.skip > 0) {
+                        if (t.skip > 1) {
+                            enqueuePendingThread(&scratch.next_queue, &next_len, t.inst_id, t.skip - 1, &t.slots, num_slots);
+                        } else {
+                            addThread(
+                                prog,
+                                scratch,
+                                &scratch.next_queue,
+                                &next_len,
+                                &best_match_slots,
+                                t.inst_id,
+                                &t.slots,
+                                input,
+                                p + 1,
+                                next_gen,
+                                num_slots,
+                            );
+                        }
+                        continue;
+                    }
+
+                    const inst = prog.insts[t.inst_id];
+                    if (inst.op == .match) {
+                        var match_slots: [MAX_SLOTS]usize = undefined;
+                        @memcpy(match_slots[0..num_slots], t.slots[0..num_slots]);
+                        best_match_slots = match_slots;
+                        break;
+                    }
+                    const bm = matchChar(prog, inst, input, p);
+                    if (bm.ok) {
+                        if (bm.len > 1) {
+                            enqueuePendingThread(&scratch.next_queue, &next_len, inst.out1, @intCast(bm.len - 1), &t.slots, num_slots);
+                        } else {
+                            addThread(
+                                prog,
+                                scratch,
+                                &scratch.next_queue,
+                                &next_len,
+                                &best_match_slots,
+                                inst.out1,
+                                &t.slots,
+                                input,
+                                p + 1,
+                                next_gen,
+                                num_slots,
+                            );
+                        }
+                    }
+                }
+            }
+
+            // Inject a fresh start thread for the next position. Once any match
+            // is recorded, lower-priority start positions are unnecessary.
+            if (best_match_slots == null) {
+                var start_slots: [MAX_SLOTS]usize = undefined;
+                @memset(start_slots[0..num_slots], UNSET_SLOT);
+                start_slots[0] = p + 1;
+                addThread(
+                    prog,
+                    scratch,
+                    &scratch.next_queue,
+                    &next_len,
+                    &best_match_slots,
+                    prog.start_inst,
+                    &start_slots,
+                    input,
+                    p + 1,
+                    next_gen,
+                    num_slots,
+                );
+            }
+
+            const temp = scratch.curr_queue;
+            scratch.curr_queue = scratch.next_queue;
+            scratch.next_queue = temp;
+            curr_len = next_len;
+
+            p += 1;
+        }
+
+        // Process any remaining match threads at end of input.
         for (scratch.curr_queue[0..curr_len]) |*t| {
             if (t.skip == 0 and prog.insts[t.inst_id].op == .match) {
                 var match_slots: [MAX_SLOTS]usize = undefined;
