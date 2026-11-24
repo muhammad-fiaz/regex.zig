@@ -15,11 +15,11 @@ pub const Opcode = enum(u8) {
     /// Match byte in range [data & 0xFF, (data >> 8) & 0xFF].
     byte_range,
 
-    /// Match any byte (used by '.' in dotAll mode).
-    any_byte,
+    /// Match any complete UTF-8 character (used by '.' in dotAll mode).
+    any_char,
 
-    /// Match any byte except newline '\n' (used by '.' in default mode).
-    any_non_nl,
+    /// Match any complete UTF-8 character except newline '\n' (used by '.' in default mode).
+    any_char_non_nl,
 
     /// Match a character class referenced by index in data.
     char_class,
@@ -47,6 +47,7 @@ pub const Opcode = enum(u8) {
 pub const EmptyWidthType = enum(u8) {
     start_text,
     end_text,
+    end_text_newline,
     start_line,
     end_line,
     word_boundary,
@@ -75,6 +76,8 @@ pub const Prog = struct {
     flags: CompileFlags,
     start_inst: u32,
     literal_prefix: ?[]const u8,
+    /// Whether the extracted literal prefix is matched case-insensitively.
+    literal_prefix_caseless: bool = false,
     is_pure_literal: bool,
     is_start_anchored: bool = false,
     allocator: std.mem.Allocator,

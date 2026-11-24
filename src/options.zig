@@ -1,5 +1,9 @@
 const std = @import("std");
 
+/// Number of capture groups addressable by the inline `Captures` storage.
+/// Group 0 is the full match, leaving 31 user-visible groups in 32 slots.
+pub const max_inline_capture_groups: usize = 31;
+
 /// Safety and resource limits to defend against algorithmic denial of service (ReDoS).
 pub const Limits = struct {
     /// Maximum allowed pattern length in bytes.
@@ -12,7 +16,9 @@ pub const Limits = struct {
     maxProgramSize: usize = 65536,
 
     /// Maximum number of capturing groups allowed in a pattern.
-    maxCaptures: usize = 128,
+    /// Values above `max_inline_capture_groups` are clamped to keep every
+    /// capture addressable by the inline `Captures` storage.
+    maxCaptures: usize = max_inline_capture_groups,
 
     /// Maximum repetition count in bounded repetitions {min,max}.
     maxRepetition: usize = 1000,
@@ -32,8 +38,15 @@ pub const CompileOptions = struct {
     /// Inverts the greediness of quantifiers ('U' flag).
     ungreedy: bool = false,
 
-    /// Restrict shorthand classes (\d, \w, \s) and boundaries to ASCII.
+    /// Restrict shorthand classes (\d, \w, \s) and word boundaries (\b, \B) to
+    /// ASCII. By default these are Unicode-aware. Does not affect dot, explicit
+    /// character classes, or \p{…} property classes.
     ascii: bool = false,
+
+    /// Extended (verbose) mode ('x' flag): ignores unescaped ASCII whitespace
+    /// and `#` line comments between tokens. Whitespace inside bracket
+    /// expressions and inside `\Q…\E` quotes remains significant.
+    extended: bool = false,
 
     /// Safety and memory resource limits.
     limits: Limits = .{},
@@ -49,7 +62,8 @@ pub const CompileFlags = packed struct {
     dotAll: bool = false,
     ungreedy: bool = false,
     ascii: bool = false,
-    _padding: u3 = 0,
+    extended: bool = false,
+    _padding: u2 = 0,
 
     pub fn fromCompileOptions(opts: CompileOptions) CompileFlags {
         return .{
@@ -58,6 +72,7 @@ pub const CompileFlags = packed struct {
             .dotAll = opts.dotAll,
             .ungreedy = opts.ungreedy,
             .ascii = opts.ascii,
+            .extended = opts.extended,
         };
     }
 };
@@ -87,6 +102,9 @@ pub const ReplaceAllOptions = struct {
 /// Options for splitting text by regex matches (split).
 pub const SplitOptions = struct {
     startOffset: usize = 0,
+    /// Maximum number of delimiters to consume. The unconsumed remainder of the
+    /// input becomes the final field, so `maxSplits = n` yields at most `n + 1`
+    /// fields. `0` performs no splits; `null` splits on every match.
     maxSplits: ?usize = null,
 };
 

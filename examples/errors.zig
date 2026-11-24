@@ -44,6 +44,15 @@ pub fn main() !void {
     // 5. Unsupported lookaround
     inspectPattern(allocator, "(?=prefix)value");
 
-    // 6. Valid pattern
+    // 6. Invalid bounded repetition (min greater than max)
+    inspectPattern(allocator, "a{5,2}");
+
+    // 7. Duplicate named capture group
+    inspectPattern(allocator, "(?P<x>a)(?P<x>b)");
+
+    // 8. Trailing backslash (unterminated escape)
+    inspectPattern(allocator, "abc\\");
+
+    // 9. Valid pattern
     inspectPattern(allocator, "^[a-zA-Z0-9_]+$");
 }

@@ -20,10 +20,18 @@ pub const CompileOptions = struct {
     multiline: bool = false,
     dotAll: bool = false,
     ungreedy: bool = false,
+    /// Restrict \d, \w, \s and \b, \B to ASCII (Unicode-aware by default).
     ascii: bool = false,
+    /// Extended (verbose) mode: ignore unescaped whitespace and '#' comments.
+    extended: bool = false,
     limits: Limits = .{},
 };
 ```
+
+`ascii` only affects the predefined shorthands and word boundaries. Dot, explicit
+bracket classes, and `\p{…}` property classes always operate on Unicode codepoints.
+`extended` matches the `(?x)` flag; whitespace inside bracket expressions and
+`\Q…\E` quotes is never ignored.
 
 ---
 
@@ -36,7 +44,7 @@ pub const Limits = struct {
     maxPatternLength: usize = 65536,
     maxNestingDepth: usize = 256,
     maxProgramSize: usize = 65536,
-    maxCaptures: usize = 128,
+    maxCaptures: usize = 31,
     maxRepetition: usize = 1000,
 };
 ```
@@ -88,6 +96,8 @@ pub const ReplaceAllOptions = struct {
 ```zig
 pub const SplitOptions = struct {
     startOffset: usize = 0,
+    /// Maximum number of delimiters to consume; the remainder becomes the final
+    /// field, so `n` splits yield at most `n + 1` fields.
     maxSplits: ?usize = null,
 };
 ```

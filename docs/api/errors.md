@@ -15,16 +15,19 @@ keywords: zig, regex, api, errors, diagnostics, error set, errorcategory
 ```zig
 pub const Error = error{
     // Syntax errors
-    UnexpectedEnd,
+    UnexpectedCharacter,
     UnterminatedGroup,
     UnclosedCharacterClass,
-    InvalidCharacterRange,
-    InvalidQuantifier,
-    InvalidRepetitionRange,
-    EmptyRepetition,
-    InvalidEscapeSequence,
     UnterminatedEscape,
+    InvalidEscapeSequence,
+    InvalidCharacterRange,
+    InvalidRepetitionRange,
+    InvalidQuantifier,
+    EmptyRepetition,
+    MissingGroupName,
     InvalidGroupName,
+    DuplicateGroupName,
+    EmptyClass,
 
     // Safety and resource limits
     PatternTooLong,
@@ -36,6 +39,7 @@ pub const Error = error{
     // Unsupported dialect constructs
     UnsupportedBackreference,
     UnsupportedLookaround,
+    UnsupportedConstruct,
 
     // Memory
     OutOfMemory,
@@ -52,12 +56,13 @@ When parsing fails, `Parser.diagnostic` contains detailed diagnostic information
 pub const Diagnostic = struct {
     err: Error,
     category: ErrorCategory,
-    offset: usize,
-    line: usize,
-    column: usize,
-    message: []const u8,
+    offset: usize = 0,
+    line: usize = 1,
+    column: usize = 1,
+    message: []const u8 = "",
 
-    pub fn printBuf(self: Diagnostic, buf: []u8) ![]const u8
+    pub fn write(self: Diagnostic, writer: anytype) !void;
+    pub fn printBuf(self: Diagnostic, buf: []u8) ![]const u8;
 };
 ```
 
@@ -66,9 +71,9 @@ pub const Diagnostic = struct {
 ```zig
 pub const ErrorCategory = enum {
     syntax,
-    limit,
     unsupported,
-    internal,
+    limit,
+    memory,
 };
 ```
 

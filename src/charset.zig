@@ -1,4 +1,5 @@
 const std = @import("std");
+const ucd = @import("ucd.zig");
 
 /// Inclusive Unicode codepoint range [min, max].
 pub const Range = struct {
@@ -10,48 +11,54 @@ pub const Range = struct {
     }
 };
 
+fn rangeLessThan(_: void, a: Range, b: Range) bool {
+    return a.min < b.min;
+}
+
+fn rangeOrder(cp: u21, r: Range) std.math.Order {
+    if (cp < r.min) return .lt;
+    if (cp > r.max) return .gt;
+    return .eq;
+}
+
+const BitSet = std.bit_set.Static(256);
+
 /// 256-bit bitmap for O(1) ASCII byte membership checks.
+///
+/// This is a thin compatibility layer over `std.bit_set.Static(256)` so the
+/// implementation reuses the standard library's tested bit operations.
 pub const Bitmap256 = struct {
-    bits: [4]u64 = .{ 0, 0, 0, 0 },
+    bits: BitSet = BitSet.empty,
 
     pub fn initEmpty() Bitmap256 {
-        return .{};
+        return .{ .bits = BitSet.empty };
     }
 
     pub fn initFull() Bitmap256 {
-        return .{ .bits = .{ ~@as(u64, 0), ~@as(u64, 0), ~@as(u64, 0), ~@as(u64, 0) } };
+        return .{ .bits = BitSet.full };
     }
 
     pub fn set(self: *Bitmap256, byte: u8) void {
-        const word_idx = byte >> 6;
-        const bit_idx: u6 = @intCast(byte & 63);
-        self.bits[word_idx] |= (@as(u64, 1) << bit_idx);
+        self.bits.set(byte);
     }
 
     pub fn clear(self: *Bitmap256, byte: u8) void {
-        const word_idx = byte >> 6;
-        const bit_idx: u6 = @intCast(byte & 63);
-        self.bits[word_idx] &= ~(@as(u64, 1) << bit_idx);
+        self.bits.unset(byte);
     }
 
     pub fn isSet(self: Bitmap256, byte: u8) bool {
-        const word_idx = byte >> 6;
-        const bit_idx: u6 = @intCast(byte & 63);
-        return (self.bits[word_idx] & (@as(u64, 1) << bit_idx)) != 0;
+        return self.bits.isSet(byte);
     }
 
     pub fn setRange(self: *Bitmap256, min: u8, max: u8) void {
-        var b: usize = min;
-        while (b <= max) : (b += 1) {
-            self.set(@intCast(b));
-        }
+        self.bits.setRangeValue(.{
+            .start = min,
+            .end = @as(usize, max) + 1,
+        }, true);
     }
 
     pub fn invert(self: *Bitmap256) void {
-        self.bits[0] = ~self.bits[0];
-        self.bits[1] = ~self.bits[1];
-        self.bits[2] = ~self.bits[2];
-        self.bits[3] = ~self.bits[3];
+        self.bits.toggleAll();
     }
 };
 
@@ -61,6 +68,7 @@ pub const CharClass = struct {
     is_negated: bool = false,
     ascii_bitmap: Bitmap256 = .{},
     has_non_ascii: bool = false,
+    caseless: bool = false,
 
     /// Build a character class from an array of ranges and negation flag.
     pub fn init(allocator: std.mem.Allocator, ranges: []const Range, is_negated: bool) !CharClass {
@@ -78,14 +86,23 @@ pub const CharClass = struct {
             }
         }
 
-        if (is_negated) {
-            bitmap.invert();
-        }
-
+        // Normalize to sorted, merged ranges so membership is a binary search.
         const owned_ranges = try allocator.dupe(Range, ranges);
+        errdefer allocator.free(owned_ranges);
+        std.sort.pdq(Range, owned_ranges, {}, rangeLessThan);
+        var n: usize = 0;
+        for (owned_ranges) |r| {
+            if (n > 0 and r.min <= owned_ranges[n - 1].max + 1) {
+                owned_ranges[n - 1].max = @max(owned_ranges[n - 1].max, r.max);
+            } else {
+                owned_ranges[n] = r;
+                n += 1;
+            }
+        }
+        const merged = try allocator.realloc(owned_ranges, n);
 
         return CharClass{
-            .ranges = owned_ranges,
+            .ranges = merged,
             .is_negated = is_negated,
             .ascii_bitmap = bitmap,
             .has_non_ascii = non_ascii,
@@ -99,27 +116,46 @@ pub const CharClass = struct {
 
     /// Check if a byte matches this character class.
     pub fn matchesByte(self: CharClass, byte: u8) bool {
-        return self.ascii_bitmap.isSet(byte);
+        var matched = self.ascii_bitmap.isSet(byte);
+        if (!matched and self.caseless) {
+            matched = self.ascii_bitmap.isSet(std.ascii.toLower(byte)) or
+                self.ascii_bitmap.isSet(std.ascii.toUpper(byte));
+            if (!matched and self.has_non_ascii) {
+                if (ucd.caselessEquivalents(byte)) |equivalents| {
+                    for (equivalents) |peer| {
+                        if (peer >= 128 and self.matchesRaw(peer)) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        return if (self.is_negated) !matched else matched;
+    }
+
+    fn matchesRaw(self: CharClass, codepoint: u21) bool {
+        if (codepoint <= 255) {
+            return self.ascii_bitmap.isSet(@intCast(codepoint));
+        }
+        if (!self.has_non_ascii) return false;
+        return std.sort.binarySearch(Range, self.ranges, codepoint, rangeOrder) != null;
     }
 
     /// Check if a Unicode codepoint matches this character class.
     pub fn matches(self: CharClass, codepoint: u21) bool {
-        if (codepoint <= 255) {
-            return self.ascii_bitmap.isSet(@intCast(codepoint));
-        }
-        if (!self.has_non_ascii) {
-            return self.is_negated;
-        }
-
-        var in_range = false;
-        for (self.ranges) |r| {
-            if (r.contains(codepoint)) {
-                in_range = true;
-                break;
+        var matched = self.matchesRaw(codepoint);
+        if (!matched and self.caseless) {
+            if (ucd.caselessEquivalents(codepoint)) |equivalents| {
+                for (equivalents) |peer| {
+                    if (self.matchesRaw(peer)) {
+                        matched = true;
+                        break;
+                    }
+                }
             }
         }
-
-        return if (self.is_negated) !in_range else in_range;
+        return if (self.is_negated) !matched else matched;
     }
 };
 
@@ -130,7 +166,7 @@ pub fn isWordByte(b: u8) bool {
 
 /// Check if a byte is ASCII whitespace [ \t\r\n\x0c\x0b].
 pub fn isSpaceByte(b: u8) bool {
-    return std.ascii.isWhitespace(b) or b == 0x0c or b == 0x0b;
+    return std.ascii.isWhitespace(b);
 }
 
 /// Check if a byte is ASCII digit [0-9].

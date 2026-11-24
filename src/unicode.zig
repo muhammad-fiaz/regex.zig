@@ -1,4 +1,5 @@
 const std = @import("std");
+const ucd = @import("ucd.zig");
 
 /// Decoded Unicode codepoint and its UTF-8 byte length.
 pub const DecodedChar = struct {
@@ -11,6 +12,11 @@ pub fn utf8SequenceLength(lead: u8) u3 {
     return std.unicode.utf8ByteSequenceLength(lead) catch 1;
 }
 
+/// True when `b` is a UTF-8 continuation byte (10xxxxxx).
+pub fn isUtf8Continuation(b: u8) bool {
+    return (b & 0xC0) == 0x80;
+}
+
 /// Decode the first UTF-8 codepoint from `bytes`. Returns null if empty or invalid.
 pub fn decodeUtf8Char(bytes: []const u8) ?DecodedChar {
     if (bytes.len == 0) return null;
@@ -18,6 +24,15 @@ pub fn decodeUtf8Char(bytes: []const u8) ?DecodedChar {
     if (bytes.len < len) return null;
     const cp = std.unicode.utf8Decode(bytes[0..len]) catch return null;
     return .{ .cp = cp, .len = len };
+}
+
+/// Return the UTF-8 encoded length of the character starting at `pos`.
+/// Invalid or truncated sequences are treated as a single byte so callers can
+/// continue scanning without getting stuck.
+pub fn charLengthAt(bytes: []const u8, pos: usize) u3 {
+    if (pos >= bytes.len) return 0;
+    if (decodeUtf8Char(bytes[pos..])) |dec| return dec.len;
+    return 1;
 }
 
 /// Convert an ASCII byte to lowercase using std.ascii.toLower.
@@ -31,44 +46,27 @@ pub fn eqlByteCaseless(a: u8, b: u8) bool {
     return std.ascii.toLower(a) == std.ascii.toLower(b);
 }
 
-/// Simple Unicode case fold mapping for codepoints.
+/// Simple Unicode case fold mapping for codepoints (full Unicode coverage).
 pub fn simpleCaseFold(cp: u21) u21 {
-    if (cp <= 127) {
-        return std.ascii.toLower(@intCast(cp));
-    }
-    // Latin-1 Supplement common folding
-    if (cp >= 0x00C0 and cp <= 0x00D6) return cp + 32;
-    if (cp >= 0x00D8 and cp <= 0x00DE) return cp + 32;
-    // Greek uppercase to lowercase
-    if (cp >= 0x0391 and cp <= 0x03A1) return cp + 32;
-    if (cp >= 0x03A3 and cp <= 0x03AB) return cp + 32;
-    // Cyrillic uppercase to lowercase
-    if (cp >= 0x0410 and cp <= 0x042F) return cp + 32;
-    return cp;
+    return ucd.simpleCaseFold(cp);
 }
 
-/// Return the opposite case counterpart for codepoint `cp` if one exists.
+/// Static case-fold equivalence class of `cp`, or null when it folds to itself.
+pub fn caselessEquivalents(cp: u21) ?[]const u21 {
+    return ucd.caselessEquivalents(cp);
+}
+
+/// Return a case counterpart for codepoint `cp` if one exists, using the full
+/// simple-case-fold equivalence tables. Uppercase and titlecase inputs map to
+/// their folded (lowercase) form; a lowercase/titlecase-only input maps to
+/// another member of its fold class when available.
 pub fn toOtherCase(cp: u21) ?u21 {
-    if (cp <= 127) {
-        const b: u8 = @intCast(cp);
-        if (std.ascii.isLower(b)) return std.ascii.toUpper(b);
-        if (std.ascii.isUpper(b)) return std.ascii.toLower(b);
-        return null;
+    const eq = caselessEquivalents(cp) orelse return null;
+    const folded = simpleCaseFold(cp);
+    if (cp != folded) return folded;
+    for (eq) |other| {
+        if (other != cp) return other;
     }
-    // Latin-1 Supplement: uppercase to lowercase
-    if (cp >= 0x00C0 and cp <= 0x00D6) return cp + 32;
-    if (cp >= 0x00D8 and cp <= 0x00DE) return cp + 32;
-    // Latin-1 Supplement: lowercase to uppercase
-    if (cp >= 0x00E0 and cp <= 0x00F6) return cp - 32;
-    if (cp >= 0x00F8 and cp <= 0x00FE) return cp - 32;
-    // Greek
-    if (cp >= 0x0391 and cp <= 0x03A1) return cp + 32;
-    if (cp >= 0x03A3 and cp <= 0x03AB) return cp + 32;
-    if (cp >= 0x03B1 and cp <= 0x03C1) return cp - 32;
-    if (cp >= 0x03C3 and cp <= 0x03CB) return cp - 32;
-    // Cyrillic
-    if (cp >= 0x0410 and cp <= 0x042F) return cp + 32;
-    if (cp >= 0x0430 and cp <= 0x044F) return cp - 32;
     return null;
 }
 
@@ -102,6 +100,12 @@ test "utf8 decoding" {
     off += c4.len;
 
     try std.testing.expectEqual(s.len, off);
+
+    try std.testing.expectEqual(@as(u3, 1), charLengthAt(s, 0));
+    try std.testing.expectEqual(@as(u3, 2), charLengthAt(s, 1));
+    try std.testing.expectEqual(@as(u3, 3), charLengthAt(s, 3));
+    try std.testing.expectEqual(@as(u3, 4), charLengthAt(s, 6));
+    try std.testing.expectEqual(@as(u3, 0), charLengthAt(s, s.len));
 }
 
 test "case folding" {
@@ -109,4 +113,15 @@ test "case folding" {
     try std.testing.expect(eqlByteCaseless('z', 'Z'));
     try std.testing.expect(!eqlByteCaseless('a', 'b'));
     try std.testing.expect(eqlCodepointCaseless(0x00C9, 0x00E9)); // 'É' == 'é'
+}
+
+test "toOtherCase covers full fold classes" {
+    const t = std.testing;
+    try t.expectEqual(@as(u21, 'a'), toOtherCase('A').?);
+    try t.expectEqual(@as(u21, 'A'), toOtherCase('a').?);
+    try t.expectEqual(@as(u21, 0x00E9), toOtherCase(0x00C9).?); // É -> é
+    try t.expectEqual(@as(u21, 0x03C3), toOtherCase(0x03A3).?); // Σ -> σ
+    try t.expectEqual(@as(u21, 0x00DF), toOtherCase(0x1E9E).?); // ẞ -> ß
+    try t.expectEqual(@as(u21, 0x10400), toOtherCase(0x10428).?); // Deseret
+    try t.expect(toOtherCase(0x3042) == null); // あ
 }

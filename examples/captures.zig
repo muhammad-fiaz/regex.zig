@@ -10,6 +10,10 @@ pub fn main() !void {
 
     const target_url = "Connecting to https://api.example.com:8443/v1/metrics for health check";
     std.debug.print("Input: {s}\n", .{target_url});
+    std.debug.print("Pattern groups: {} (host index: {})\n", .{
+        re.captureGroupCount(),
+        re.captureGroupIndex("host") orelse 0,
+    });
 
     if (re.captures(target_url, .{})) |caps| {
         std.debug.print("Full URL match: '{s}'\n", .{caps.slice()});
@@ -42,5 +46,28 @@ pub fn main() !void {
                 target_url[scheme_span.start..scheme_span.end],
             });
         }
+    }
+
+    // Optional groups simply report null when the branch did not participate.
+    if (re.captures("Mirror: http://example.org for details", .{})) |plain| {
+        std.debug.print("\nPlain URL: '{s}'\n", .{plain.slice()});
+        std.debug.print("  Port group: {s}\n", .{plain.get(3) orelse "none"});
+        std.debug.print("  Path group: {s}\n", .{plain.get(4) orelse "none"});
+    }
+
+    // Extract captures from every URL in a longer document in one pass.
+    const document = "See https://one.example.com/a and http://localhost:8080/health for status.";
+    const all = try re.capturesAll(allocator, document, .{});
+    defer allocator.free(all);
+
+    std.debug.print("\nParsed {} URLs:\n", .{all.len});
+    for (all, 1..) |caps, i| {
+        std.debug.print("  [{}] {s}://{s} port={s} path={s}\n", .{
+            i,
+            caps.name("scheme") orelse "?",
+            caps.name("host") orelse "?",
+            caps.name("port") orelse "-",
+            caps.name("path") orelse "-",
+        });
     }
 }

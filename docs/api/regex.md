@@ -134,7 +134,10 @@ pub fn replace(
 ) ![]u8
 ```
 
-Replaces the first occurrence of the pattern in `input` with `replacement`. Expands numbered groups (`$1`) and named groups (`${name}`).
+Replaces the first occurrence of the pattern in `input` with `replacement`. Template tokens:
+`$1` (numbered group), `${1}` (braced number), `${name}` (named group), `$&`/`$0`
+(full match), `` $` `` (text before the match), `$'` (text after the match), and
+`$$` for a literal dollar sign. Unknown groups expand to nothing.
 
 ---
 
@@ -190,6 +193,53 @@ Returns streaming forward iterators that safely advance past zero-length matches
 
 ---
 
+### `findAt` & `capturesAt`
+
+```zig
+pub fn findAt(self: *Regex, input: []const u8, start_pos: usize, options: MatchOptions) ?Match
+pub fn capturesAt(self: *Regex, input: []const u8, start_pos: usize, options: MatchOptions) ?Captures
+```
+
+Search starting at an explicit byte offset.
+
+---
+
+### `captureGroupCount` & `captureGroupIndex`
+
+```zig
+pub fn captureGroupCount(self: *const Regex) usize
+pub fn captureGroupIndex(self: *const Regex, name: []const u8) ?usize
+```
+
+Inspect the number of capturing groups and resolve a named group to its index.
+
+---
+
+### `createScratch` & `searchWithScratch`
+
+```zig
+pub fn createScratch(self: *const Regex, allocator: std.mem.Allocator) !Scratch
+pub fn searchWithScratch(self: *const Regex, scratch: *Scratch, input: []const u8, start_pos: usize) ?Captures
+```
+
+Create an independent scratch context for concurrent matching across threads, then
+search with it. The scratch context must be sized for this program; deinitialize it
+with `scratch.deinit()` when finished.
+
+---
+
+## Escaping Helpers
+
+```zig
+pub fn escape(allocator: std.mem.Allocator, str: []const u8) ![]u8
+pub fn escapeBuffer(buf: []u8, str: []const u8) ![]const u8
+pub fn isSpecial(b: u8) bool
+```
+
+Escape regex metacharacters in user input so it can be matched literally.
+
+---
+
 ## Result Types
 
 ### `Match`
@@ -224,7 +274,8 @@ pub const Span = struct {
 
 ### `Captures`
 
-Provides zero-allocation access to full match and submatch group slices and byte indices:
+Provides zero-allocation access to full match and submatch group slices and byte indices.
+Up to 31 capturing groups are addressable (32 inline slots including the full match).
 
 ```zig
 pub const Captures = struct {

@@ -136,10 +136,11 @@ pub const Regex = struct {
         defer list.deinit(allocator);
 
         var it = self.iterator(input, .{ .startOffset = options.startOffset });
-        while (it.next()) |m| {
+        while (true) {
             if (options.maxMatches) |limit| {
                 if (list.items.len >= limit) break;
             }
+            const m = it.next() orelse break;
             try list.append(allocator, m);
         }
 
@@ -163,10 +164,11 @@ pub const Regex = struct {
         defer list.deinit(allocator);
 
         var it = self.capturesIterator(input, .{ .startOffset = options.startOffset });
-        while (it.next()) |c| {
+        while (true) {
             if (options.maxMatches) |limit| {
                 if (list.items.len >= limit) break;
             }
+            const c = it.next() orelse break;
             try list.append(allocator, c);
         }
 
@@ -177,10 +179,11 @@ pub const Regex = struct {
     pub fn count(self: *Regex, input: []const u8, options: CountOptions) usize {
         var total: usize = 0;
         var it = self.iterator(input, .{ .startOffset = options.startOffset });
-        while (it.next()) |_| {
+        while (true) {
             if (options.maxMatches) |limit| {
                 if (total >= limit) break;
             }
+            _ = it.next() orelse break;
             total += 1;
         }
         return total;
@@ -245,10 +248,11 @@ pub const Regex = struct {
             var last_idx: usize = 0;
             var replaced_count: usize = 0;
 
-            while (it.next()) |m| {
+            while (true) {
                 if (options.maxReplacements) |limit| {
                     if (replaced_count >= limit) break;
                 }
+                const m = it.next() orelse break;
                 try out.appendSlice(allocator, input[last_idx..m.start]);
                 try out.appendSlice(allocator, replacement);
                 last_idx = m.end;
@@ -263,12 +267,11 @@ pub const Regex = struct {
         var last_idx: usize = 0;
         var replaced_count: usize = 0;
 
-        while (it.next()) |caps| {
+        while (true) {
             if (options.maxReplacements) |limit| {
-                if (replaced_count >= limit) {
-                    break;
-                }
+                if (replaced_count >= limit) break;
             }
+            const caps = it.next() orelse break;
             const b = caps.bounds();
             try out.appendSlice(allocator, input[last_idx..b.start]);
             try expandReplacement(allocator, replacement, caps, &out);
@@ -289,12 +292,11 @@ pub const Regex = struct {
         var last_idx: usize = 0;
         var split_count: usize = 0;
 
-        while (it.next()) |m| {
+        while (true) {
             if (options.maxSplits) |limit| {
-                if (split_count + 1 >= limit) {
-                    break;
-                }
+                if (split_count >= limit) break;
             }
+            const m = it.next() orelse break;
             try list.append(allocator, input[last_idx..m.start]);
             last_idx = m.end;
             split_count += 1;
@@ -437,7 +439,15 @@ test "public api split" {
 
     const parts_limited = try re.split(testing.allocator, "one, two; three   four", .{ .maxSplits = 2 });
     defer testing.allocator.free(parts_limited);
-    try testing.expectEqual(@as(usize, 2), parts_limited.len);
+    try testing.expectEqual(@as(usize, 3), parts_limited.len);
+    try testing.expectEqualStrings("one", parts_limited[0]);
+    try testing.expectEqualStrings("two", parts_limited[1]);
+    try testing.expectEqualStrings("three   four", parts_limited[2]);
+
+    const no_splits = try re.split(testing.allocator, "one, two", .{ .maxSplits = 0 });
+    defer testing.allocator.free(no_splits);
+    try testing.expectEqual(@as(usize, 1), no_splits.len);
+    try testing.expectEqualStrings("one, two", no_splits[0]);
 }
 
 test "public api count and iterator" {
@@ -479,6 +489,207 @@ test "public api escape" {
     const s = try escape(testing.allocator, "1.5 + 2.5 = 4.0");
     defer testing.allocator.free(s);
     try testing.expectEqualStrings("1\\.5 \\+ 2\\.5 = 4\\.0", s);
+}
+
+test "dot matches complete UTF-8 characters" {
+    const testing = std.testing;
+    var re = try compile(testing.allocator, ".", .{});
+    defer re.deinit();
+
+    // Regression: '.' must consume the full two-byte encoding of 'é' as one match.
+    var it = re.capturesIterator("\xC3\xA9", .{});
+    const single = it.next().?;
+    try testing.expectEqual(@as(usize, 0), single.bounds().start);
+    try testing.expectEqual(@as(usize, 2), single.bounds().end);
+    try testing.expect(it.next() == null);
+
+    // Ensure 1-, 2-, 3-, and 4-byte UTF-8 sequences each count as one character.
+    const text = "a\xC3\xA9\xE2\x82\xAC\xF0\x9F\x98\x80";
+    const expected = [_][]const u8{ "a", "\xC3\xA9", "\xE2\x82\xAC", "\xF0\x9F\x98\x80" };
+    var chars = re.capturesIterator(text, .{});
+    for (expected) |want| {
+        const caps = chars.next().?;
+        try testing.expectEqualStrings(want, caps.slice());
+    }
+    try testing.expect(chars.next() == null);
+
+    try testing.expectEqual(@as(usize, 4), re.count(text, .{}));
+
+    // Anchored patterns and matchExists must also observe character boundaries.
+    var anchored = try compile(testing.allocator, "^.$", .{});
+    defer anchored.deinit();
+    try testing.expect(anchored.isMatch("\xC3\xA9", .{}));
+    try testing.expect(!anchored.isMatch("\xC3\xA9\xC3\xA9", .{}));
+
+    var anchored_two = try compile(testing.allocator, "^..$", .{});
+    defer anchored_two.deinit();
+    try testing.expect(!anchored_two.isMatch("\xC3\xA9", .{}));
+    try testing.expect(anchored_two.isMatch("\xC3\xA9\xC3\xA9", .{}));
+
+    // Quantifiers and captures must advance across the complete character too.
+    var star = try compile(testing.allocator, ".*", .{});
+    defer star.deinit();
+    const star_match = star.find("\xC3\xA9", .{}).?;
+    try testing.expectEqualStrings("\xC3\xA9", star_match.slice);
+
+    var grouped = try compile(testing.allocator, "(.+)", .{});
+    defer grouped.deinit();
+    const group_caps = grouped.captures("\xC3\xA9", .{}).?;
+    try testing.expectEqualStrings("\xC3\xA9", group_caps.slice());
+    try testing.expectEqualStrings("\xC3\xA9", group_caps.get(1).?);
+
+    // The ASCII option restricts shorthand classes, not dot's character semantics.
+    var ascii_re = try compile(testing.allocator, ".", .{ .ascii = true });
+    defer ascii_re.deinit();
+    var ascii_it = ascii_re.capturesIterator("\xC3\xA9", .{});
+    const ascii_caps = ascii_it.next().?;
+    try testing.expectEqual(@as(usize, 2), ascii_caps.bounds().end);
+    try testing.expect(ascii_it.next() == null);
+}
+
+test "dot preserves newline semantics for multi-byte text" {
+    const testing = std.testing;
+    var re = try compile(testing.allocator, ".", .{});
+    defer re.deinit();
+
+    try testing.expect(!re.isMatch("\n", .{}));
+    try testing.expect(re.isMatch("\xC3\xA9", .{}));
+
+    var dot_all = try compile(testing.allocator, ".", .{ .dotAll = true });
+    defer dot_all.deinit();
+    try testing.expect(dot_all.isMatch("\n", .{}));
+}
+
+test "inline flags are honored and scoped" {
+    const testing = std.testing;
+
+    var caseless = try compile(testing.allocator, "(?i)abc", .{});
+    defer caseless.deinit();
+    try testing.expect(caseless.isMatch("ABC", .{}));
+
+    var scoped = try compile(testing.allocator, "(?i:abc)def", .{});
+    defer scoped.deinit();
+    try testing.expect(scoped.isMatch("ABCdef", .{}));
+    try testing.expect(!scoped.isMatch("ABCDEF", .{}));
+
+    var mid = try compile(testing.allocator, "a(?i)bc", .{});
+    defer mid.deinit();
+    try testing.expect(mid.isMatch("aBC", .{}));
+    try testing.expect(!mid.isMatch("ABC", .{}));
+
+    var dot_on = try compile(testing.allocator, "(?s).", .{});
+    defer dot_on.deinit();
+    try testing.expect(dot_on.isMatch("\n", .{}));
+
+    var dot_off = try compile(testing.allocator, "(?-s).", .{ .dotAll = true });
+    defer dot_off.deinit();
+    try testing.expect(!dot_off.isMatch("\n", .{}));
+
+    var case_off = try compile(testing.allocator, "(?-i)abc", .{ .caseInsensitive = true });
+    defer case_off.deinit();
+    try testing.expect(!case_off.isMatch("ABC", .{}));
+}
+
+test "unicode character classes decode complete codepoints" {
+    const testing = std.testing;
+
+    var hiragana = try compile(testing.allocator, "[\\u{3040}-\\u{309F}]", .{});
+    defer hiragana.deinit();
+    try testing.expect(hiragana.isMatch("\xE3\x81\x82", .{})); // あ
+    try testing.expect(!hiragana.isMatch("\xE3\x82\xA2", .{})); // ア (Katakana)
+
+    var negated = try compile(testing.allocator, "[^\\u{3040}-\\u{309F}]", .{});
+    defer negated.deinit();
+    try testing.expect(!negated.isMatch("\xE3\x81\x82", .{}));
+    try testing.expect(negated.isMatch("a", .{}));
+
+    var mixed = try compile(testing.allocator, "[a-z\\u{3040}-\\u{309F}]+", .{});
+    defer mixed.deinit();
+    const m = mixed.find("\xE3\x81\x82", .{}).?;
+    try testing.expectEqual(@as(usize, 3), m.end);
+
+    var raw = try compile(testing.allocator, "[\xC3\xA9-\xC3\xAA]", .{});
+    defer raw.deinit();
+    try testing.expect(raw.isMatch("\xC3\xA9", .{})); // é
+    try testing.expect(raw.isMatch("\xC3\xAA", .{})); // ê
+    try testing.expect(!raw.isMatch("\xC3\xA8", .{})); // è
+
+    var fold = try compile(testing.allocator, "[\xC3\xA9]", .{ .caseInsensitive = true });
+    defer fold.deinit();
+    try testing.expect(fold.isMatch("\xC3\x89", .{})); // É
+}
+
+test "unicode shorthands, properties, and boundaries" {
+    const testing = std.testing;
+
+    var word = try compile(testing.allocator, "\\w+", .{});
+    defer word.deinit();
+    try testing.expect(word.isMatch("\xC3\xA9", .{})); // é
+    try testing.expect(word.isMatch("\xE3\x81\x82", .{})); // あ
+    try testing.expect(!word.isMatch(" ", .{}));
+
+    var digit = try compile(testing.allocator, "\\d", .{});
+    defer digit.deinit();
+    try testing.expect(digit.isMatch("\xD9\xA0", .{})); // arabic-indic 0
+    try testing.expect(!digit.isMatch("a", .{}));
+
+    var space = try compile(testing.allocator, "\\s", .{});
+    defer space.deinit();
+    try testing.expect(space.isMatch("\xC2\xA0", .{})); // no-break space
+
+    var letter = try compile(testing.allocator, "\\p{L}", .{});
+    defer letter.deinit();
+    try testing.expect(letter.isMatch("\xE3\x81\x82", .{}));
+    try testing.expect(!letter.isMatch("1", .{}));
+
+    var not_letter = try compile(testing.allocator, "\\P{L}", .{});
+    defer not_letter.deinit();
+    try testing.expect(not_letter.isMatch("1", .{}));
+    try testing.expect(!not_letter.isMatch("a", .{}));
+
+    var in_class = try compile(testing.allocator, "[\\p{L}]+", .{});
+    defer in_class.deinit();
+    try testing.expect(in_class.isMatch("\xE3\x81\x82", .{}));
+
+    var non_word_class = try compile(testing.allocator, "[\\W]", .{});
+    defer non_word_class.deinit();
+    try testing.expect(non_word_class.isMatch(" ", .{}));
+    try testing.expect(!non_word_class.isMatch("\xE3\x81\x82", .{}));
+
+    var boundary = try compile(testing.allocator, "\\b\\w+\\b", .{});
+    defer boundary.deinit();
+    try testing.expect(boundary.isMatch("caf\xC3\xA9", .{}));
+
+    // The ascii option restricts shorthands and boundaries to ASCII.
+    var ascii_word = try compile(testing.allocator, "\\w", .{ .ascii = true });
+    defer ascii_word.deinit();
+    try testing.expect(ascii_word.isMatch("a", .{}));
+    try testing.expect(!ascii_word.isMatch("\xC3\xA9", .{}));
+
+    try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\p{Nope}", .{}));
+}
+
+test "pure literal shortcut preserves capturing groups" {
+    const testing = std.testing;
+    var re = try compile(testing.allocator, "(abc)", .{});
+    defer re.deinit();
+
+    const caps = re.captures("abc", .{}).?;
+    try testing.expectEqual(@as(usize, 1), caps.count());
+    try testing.expectEqualStrings("abc", caps.get(1).?);
+
+    var named = try compile(testing.allocator, "(?P<word>abc)", .{});
+    defer named.deinit();
+    const ncaps = named.captures("abc", .{}).?;
+    try testing.expectEqualStrings("abc", ncaps.name("word").?);
+}
+
+test "unicode escape bounds and lookbehind diagnostics" {
+    const testing = std.testing;
+    try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\u{FFFFFF}", .{}));
+    try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\u{}", .{}));
+    try testing.expectError(error.UnsupportedLookaround, compile(testing.allocator, "(?<=a)b", .{}));
+    try testing.expectError(error.UnsupportedLookaround, compile(testing.allocator, "(?<!a)b", .{}));
 }
 
 test "greedy vs lazy quantifiers" {
@@ -572,4 +783,201 @@ test "top level convenience isMatch" {
     const testing = std.testing;
     try testing.expect(try isMatch(testing.allocator, "^[0-9]+$", "12345", .{}));
     try testing.expect(!try isMatch(testing.allocator, "^[0-9]+$", "123a45", .{}));
+}
+
+test "extended escape forms and quoting" {
+    const testing = std.testing;
+
+    var short_u = try compile(testing.allocator, "\\u00E9", .{});
+    defer short_u.deinit();
+    try testing.expectEqualStrings("\xC3\xA9", short_u.find("\xC3\xA9", .{}).?.slice);
+
+    var braced_x = try compile(testing.allocator, "\\x{1F600}", .{});
+    defer braced_x.deinit();
+    try testing.expectEqualStrings("\xF0\x9F\x98\x80", braced_x.find("\xF0\x9F\x98\x80", .{}).?.slice);
+
+    var surrogate = try compile(testing.allocator, "\\uD83D\\uDE00", .{});
+    defer surrogate.deinit();
+    try testing.expectEqualStrings("\xF0\x9F\x98\x80", surrogate.find("\xF0\x9F\x98\x80", .{}).?.slice);
+
+    var surrogate_class = try compile(testing.allocator, "[\\uD83D\\uDE00]", .{});
+    defer surrogate_class.deinit();
+    try testing.expect(surrogate_class.isMatch("\xF0\x9F\x98\x80", .{}));
+
+    var quoted = try compile(testing.allocator, "\\Qa+b*c\\E", .{});
+    defer quoted.deinit();
+    try testing.expectEqualStrings("a+b*c", quoted.find("a+b*c", .{}).?.slice);
+    try testing.expect(!quoted.isMatch("aaabc", .{}));
+
+    var quoted_class = try compile(testing.allocator, "[\\Qa-d\\E]+", .{});
+    defer quoted_class.deinit();
+    try testing.expectEqualStrings("a-d", quoted_class.find("a-d", .{}).?.slice);
+    try testing.expect(!quoted_class.isMatch("b", .{}));
+
+    // A quantifier after \Q...\E binds only to the final quoted character.
+    var quoted_star = try compile(testing.allocator, "\\Qab\\E*", .{});
+    defer quoted_star.deinit();
+    try testing.expectEqualStrings("abb", quoted_star.find("abb", .{}).?.slice);
+    try testing.expectEqualStrings("ab", quoted_star.find("abab", .{}).?.slice);
+    try testing.expectEqualStrings("a", quoted_star.find("a", .{}).?.slice);
+
+    var quoted_plus = try compile(testing.allocator, "\\Qab\\E+", .{});
+    defer quoted_plus.deinit();
+    try testing.expectEqualStrings("ab", quoted_plus.find("aab", .{}).?.slice);
+    try testing.expectEqualStrings("abb", quoted_plus.find("abb", .{}).?.slice);
+
+    var quoted_count = try compile(testing.allocator, "\\Qab\\E{2}", .{});
+    defer quoted_count.deinit();
+    try testing.expectEqualStrings("abb", quoted_count.find("abb", .{}).?.slice);
+    try testing.expect(!quoted_count.isMatch("ab", .{}));
+
+    // A single multibyte quoted character keeps the quantifier on the character.
+    var quoted_multibyte = try compile(testing.allocator, "\\Q\xC3\xA9\\E*", .{});
+    defer quoted_multibyte.deinit();
+    try testing.expectEqualStrings("\xC3\xA9\xC3\xA9", quoted_multibyte.find("\xC3\xA9\xC3\xA9", .{}).?.slice);
+
+    var comment = try compile(testing.allocator, "(?#ignore this)abc", .{});
+    defer comment.deinit();
+    try testing.expect(comment.isMatch("abc", .{}));
+
+    var control = try compile(testing.allocator, "\\cA\\012\\o{101}", .{});
+    defer control.deinit();
+    try testing.expect(control.isMatch("\x01\nA", .{}));
+}
+
+test "simple case folding uses full equivalence classes" {
+    const testing = std.testing;
+    const pairs = [_]struct { pattern: []const u8, input: []const u8 }{
+        .{ .pattern = "(?i)\xC3\x9F", .input = "\xE1\xBA\x9E" }, // ß / ẞ
+        .{ .pattern = "(?i)\xCF\x82", .input = "\xCE\xA3" }, // ς / Σ
+        .{ .pattern = "(?i)k", .input = "\xE2\x84\xAA" }, // k / KELVIN SIGN
+        .{ .pattern = "(?i)s", .input = "\xC5\xBF" }, // s / LONG S
+        .{ .pattern = "(?i)\xCF\x85", .input = "\xCE\xA5" }, // υ / Υ
+    };
+    for (pairs) |case| {
+        var re = try compile(testing.allocator, case.pattern, .{});
+        defer re.deinit();
+        try testing.expect(re.isMatch(case.input, .{}));
+    }
+
+    var class = try compile(testing.allocator, "(?i)[\xC3\x9F]", .{});
+    defer class.deinit();
+    try testing.expect(class.isMatch("\xE1\xBA\x9E", .{}));
+
+    var class_cp = try compile(testing.allocator, "(?i)\\u{212A}", .{});
+    defer class_cp.deinit();
+    try testing.expect(class_cp.isMatch("k", .{}));
+}
+
+test "extended mode ignores whitespace and comments" {
+    const testing = std.testing;
+    var re = try compile(testing.allocator, "(?x) a b # trailing comment\n c", .{});
+    defer re.deinit();
+    try testing.expectEqualStrings("abc", re.find("abc", .{}).?.slice);
+    try testing.expect(!re.isMatch("a b c", .{}));
+
+    // Whitespace inside a bracket expression stays significant.
+    var class = try compile(testing.allocator, "(?x)[ ]", .{});
+    defer class.deinit();
+    try testing.expect(class.isMatch(" ", .{}));
+    try testing.expect(!class.isMatch("a", .{}));
+
+    // Scoped verbose flag restores the previous mode.
+    var scoped = try compile(testing.allocator, "(?x: a b )c", .{});
+    defer scoped.deinit();
+    try testing.expectEqualStrings("abc", scoped.find("abc", .{}).?.slice);
+    try testing.expect(!scoped.isMatch("ab", .{}));
+
+    // Escaped whitespace and \Q...\E stay literal.
+    var escaped_space = try compile(testing.allocator, "(?x)a\\ b", .{});
+    defer escaped_space.deinit();
+    try testing.expectEqualStrings("a b", escaped_space.find("a b", .{}).?.slice);
+
+    var quoted = try compile(testing.allocator, "(?x)\\Q a b \\E", .{});
+    defer quoted.deinit();
+    try testing.expectEqualStrings(" a b ", quoted.find(" a b ", .{}).?.slice);
+
+    // The same behavior is available through CompileOptions.
+    var via_options = try compile(testing.allocator, "a  b # note\n c", .{ .extended = true });
+    defer via_options.deinit();
+    try testing.expectEqualStrings("abc", via_options.find("abc", .{}).?.slice);
+    try testing.expect(!via_options.isMatch("a  b", .{}));
+}
+
+test "text end assertions, posix negation, and prefix safety" {
+    const testing = std.testing;
+
+    var z_final = try compile(testing.allocator, "a\\Z", .{});
+    defer z_final.deinit();
+    try testing.expect(z_final.isMatch("a\n", .{}));
+    try testing.expect(!z_final.isMatch("a\nb", .{}));
+
+    var z_plain = try compile(testing.allocator, "\\Z", .{});
+    defer z_plain.deinit();
+    try testing.expectEqual(@as(usize, 2), z_plain.find("ab\n", .{}).?.start);
+
+    var negated_posix = try compile(testing.allocator, "[[:^lower:]]+", .{});
+    defer negated_posix.deinit();
+    try testing.expectEqualStrings("ABC", negated_posix.find("ABC", .{}).?.slice);
+    try testing.expect(negated_posix.isMatch("\xC3\xA9", .{})); // é
+    try testing.expect(!negated_posix.isMatch("abc", .{}));
+
+    // Regression: a scoped group must not truncate the literal fast path.
+    var scoped = try compile(testing.allocator, "(?s:ab)c", .{});
+    defer scoped.deinit();
+    try testing.expectEqualStrings("abc", scoped.find("abc", .{}).?.slice);
+    try testing.expect(!scoped.isMatch("abx", .{}));
+
+    // Multiline `$` only recognizes `\n` as a line terminator.
+    var ml = try compile(testing.allocator, "(?m)a$", .{});
+    defer ml.deinit();
+    try testing.expect(ml.isMatch("a\nb", .{}));
+    try testing.expect(!ml.isMatch("a\r\nb", .{}));
+}
+
+test "invalid constructs are rejected" {
+    const testing = std.testing;
+    try testing.expectError(error.UnexpectedCharacter, compile(testing.allocator, "(?)", .{}));
+    try testing.expectError(error.UnexpectedCharacter, compile(testing.allocator, "(?-)", .{}));
+    try testing.expectError(error.InvalidGroupName, compile(testing.allocator, "(?P<1a>x)", .{}));
+    try testing.expectError(error.UnsupportedBackreference, compile(testing.allocator, "(?P=a)", .{}));
+    try testing.expectError(error.UnsupportedConstruct, compile(testing.allocator, "\\G", .{}));
+    try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\uD800", .{}));
+    try testing.expectError(error.InvalidEscapeSequence, compile(testing.allocator, "\\x{110000}", .{}));
+}
+
+test "quantified zero-width assertions" {
+    const testing = std.testing;
+
+    var word_star = try compile(testing.allocator, "\\b*", .{});
+    defer word_star.deinit();
+    try testing.expectEqual(@as(usize, 0), word_star.find("abc", .{}).?.start);
+    try testing.expectEqual(@as(usize, 0), word_star.find("abc", .{}).?.end);
+
+    var word_plus = try compile(testing.allocator, "\\b+", .{});
+    defer word_plus.deinit();
+    try testing.expectEqual(@as(usize, 0), word_plus.find("abc", .{}).?.start);
+
+    var start_plus = try compile(testing.allocator, "^+", .{});
+    defer start_plus.deinit();
+    try testing.expectEqual(@as(usize, 0), start_plus.find("abc", .{}).?.start);
+
+    var end_plus = try compile(testing.allocator, "$+", .{});
+    defer end_plus.deinit();
+    try testing.expectEqual(@as(usize, 3), end_plus.find("abc", .{}).?.start);
+    try testing.expectEqual(@as(usize, 3), end_plus.find("abc", .{}).?.end);
+
+    var empty_star = try compile(testing.allocator, "()*", .{});
+    defer empty_star.deinit();
+    try testing.expectEqual(@as(usize, 0), empty_star.find("x", .{}).?.start);
+}
+
+test "braced numeric replacement tokens" {
+    const testing = std.testing;
+    var re = try compile(testing.allocator, "(\\w+)@(\\w+)", .{});
+    defer re.deinit();
+
+    const out = try re.replace(testing.allocator, "bob@mail", "${1}-${2}", .{});
+    defer testing.allocator.free(out);
+    try testing.expectEqualStrings("bob-mail", out);
 }

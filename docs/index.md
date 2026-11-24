@@ -33,7 +33,7 @@ features:
   - title: Idiomatic Inline .{} Options
     details: Clean and ergonomic Zig API where every configurable operation accepts inline .{} options with documented safe defaults.
   - title: Submatch & Named Captures
-    details: Fast capture group extraction with up to 32 inline capture slots, named groups (?P&lt;name&gt;...), and zero heap allocation during search.
+    details: Fast capture group extraction with 32 inline capture slots (full match + 31 groups), named groups (?P&lt;name&gt;...) and (?&lt;name&gt;...), and zero heap allocation during search.
   - title: Literal Prefilter Acceleration
     details: Automatic literal prefix extraction and substring search acceleration bypassing full NFA exploration when possible.
   - title: Safe Streaming Iteration
@@ -41,7 +41,7 @@ features:
   - title: Replacement & String Splitting
     details: Replace single or all matches expanding numbered ($1) and named (${name}) groups, and split strings across custom delimiter patterns.
   - title: Unicode & Case Folding
-    details: Full UTF-8 sequence decoding, ASCII character classes, POSIX classes, and Unicode simple case folding across multi-byte codepoints.
+    details: Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, Unicode-aware shorthands and property classes (\p{L}, \p{Nd}), POSIX classes, scoped inline flags, and full Unicode simple case folding.
   - title: Safety & Resource Limits
     details: Configurable limits for pattern length, parenthesis nesting depth, compiled instruction count, and repetition bounds to prevent memory exhaustion.
   - title: Cross-Platform Portability

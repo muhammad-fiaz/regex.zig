@@ -55,4 +55,31 @@ pub fn main() !void {
     std.debug.print("Exceeding maxRepetition (50 count):     {s}\n", .{
         if (res_rep) |_| "accepted" else |err| @errorName(err),
     });
+
+    // Exceeding the capture-group quota
+    const many_caps = "(a)(b)(c)";
+    const res_caps = regex.compile(allocator, many_caps, .{
+        .limits = .{ .maxCaptures = 2 },
+    });
+    std.debug.print("Exceeding maxCaptures (2 groups):       {s}\n", .{
+        if (res_caps) |_| "accepted" else |err| @errorName(err),
+    });
+
+    // Exceeding the compiled instruction budget
+    const long_literal = "abcdefghij";
+    const res_prog = regex.compile(allocator, long_literal, .{
+        .limits = .{ .maxProgramSize = 5 },
+    });
+    std.debug.print("Exceeding maxProgramSize (5 insts):     {s}\n", .{
+        if (res_prog) |_| "accepted" else |err| @errorName(err),
+    });
+
+    // A generous budget accepts the same pattern.
+    var ok = try regex.compile(allocator, long_literal, .{
+        .limits = .{ .maxPatternLength = 64, .maxProgramSize = 128 },
+    });
+    defer ok.deinit();
+    std.debug.print("Within generous limits:                 accepted ({})\n", .{
+        ok.isMatch("xxabcdefghijyy", .{}),
+    });
 }

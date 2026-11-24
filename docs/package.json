@@ -1,5 +1,5 @@
 {
-  "name": "zon-docs",
+  "name": "regex-zig-docs",
   "version": "1.0.0",
   "private": true,
   "type": "module",
@@ -10,6 +10,6 @@
   },
   "devDependencies": {
     "vitepress": "^1.6.4",
-    "vitepress-plugin-llms": "^1.14.0"
+    "vitepress-plugin-llms": "^1.15.0"
   }
 }

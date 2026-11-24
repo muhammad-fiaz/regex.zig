@@ -75,7 +75,7 @@ pub fn main() !void {
     const allocator = std.heap.page_allocator;
 
     std.debug.print("========================================================================================\n", .{});
-    std.debug.print("                         regex.zig v0.0.1 Client-Side Benchmarks                         \n", .{});
+    std.debug.print("                         regex.zig v0.0.2 Client-Side Benchmarks                         \n", .{});
     std.debug.print("========================================================================================\n", .{});
 
     // 1. Literal matching benchmark
