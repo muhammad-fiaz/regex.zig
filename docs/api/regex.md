@@ -134,7 +134,10 @@ pub fn replace(
 ) ![]u8
 ```
 
-Replaces the first occurrence of the pattern in `input` with `replacement`. Expands numbered groups (`$1`) and named groups (`${name}`).
+Replaces the first occurrence of the pattern in `input` with `replacement`. Template tokens:
+`$1` (numbered group), `${1}` (braced number), `${name}` (named group), `$&`/`$0`
+(full match), `` $` `` (text before the match), `$'` (text after the match), and
+`$$` for a literal dollar sign. Unknown groups expand to nothing.
 
 ---
 

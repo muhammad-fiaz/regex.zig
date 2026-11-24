@@ -22,12 +22,16 @@ pub const CompileOptions = struct {
     ungreedy: bool = false,
     /// Restrict \d, \w, \s and \b, \B to ASCII (Unicode-aware by default).
     ascii: bool = false,
+    /// Extended (verbose) mode: ignore unescaped whitespace and '#' comments.
+    extended: bool = false,
     limits: Limits = .{},
 };
 ```
 
 `ascii` only affects the predefined shorthands and word boundaries. Dot, explicit
 bracket classes, and `\p{…}` property classes always operate on Unicode codepoints.
+`extended` matches the `(?x)` flag; whitespace inside bracket expressions and
+`\Q…\E` quotes is never ignored.
 
 ---
 

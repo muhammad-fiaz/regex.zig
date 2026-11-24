@@ -98,6 +98,25 @@ pub const Parser = struct {
         return false;
     }
 
+    /// In extended mode, skip ASCII whitespace and `#` line comments between
+    /// tokens. Escapes are never skipped, so `\ ` and `\#` stay literal.
+    fn skipIgnored(self: *Parser) void {
+        if (!self.current_flags.extended) return;
+        while (self.pos < self.pattern.len) {
+            const c = self.pattern[self.pos];
+            if (c == '\\') return;
+            if (c == '#') {
+                while (self.pos < self.pattern.len and self.pattern[self.pos] != '\n') : (self.pos += 1) {}
+                continue;
+            }
+            if (c == ' ' or c == '\t' or c == '\n' or c == '\r' or c == 0x0B or c == 0x0C) {
+                self.pos += 1;
+                continue;
+            }
+            return;
+        }
+    }
+
     pub fn parse(self: *Parser) Error!Ast {
         if (self.pattern.len > self.options.limits.maxPatternLength) {
             return self.fail(error.PatternTooLong, .limit, 0, "pattern exceeds maximum allowed length");
@@ -125,12 +144,16 @@ pub const Parser = struct {
         var branches: std.ArrayList(Node) = .empty;
         defer branches.deinit(alloc);
 
+        self.skipIgnored();
         const first = try self.parseConcat();
         try branches.append(alloc, first.*);
 
+        self.skipIgnored();
         while (self.match('|')) {
+            self.skipIgnored();
             const next_node = try self.parseConcat();
             try branches.append(alloc, next_node.*);
+            self.skipIgnored();
         }
 
         if (branches.items.len == 1) {
@@ -156,6 +179,8 @@ pub const Parser = struct {
         defer list.deinit(alloc);
 
         while (self.pos < self.pattern.len) {
+            self.skipIgnored();
+            if (self.pos >= self.pattern.len) break;
             const b = self.peek().?;
             if (b == '|' or b == ')') break;
             const quantified = try self.parseQuantified();
@@ -186,7 +211,9 @@ pub const Parser = struct {
     }
 
     fn parseQuantified(self: *Parser) Error!*Node {
+        const atom_start = self.pos;
         const atom = try self.parseAtom();
+        self.skipIgnored();
 
         if (self.pos >= self.pattern.len) return atom;
 
@@ -195,21 +222,27 @@ pub const Parser = struct {
 
         if (b == '*') {
             self.pos += 1;
-            const greedy = if (self.match('?')) self.current_flags.ungreedy else !self.current_flags.ungreedy;
-            rep = .{ .min = 0, .max = null, .greedy = greedy };
+            rep = .{ .min = 0, .max = null, .greedy = self.greedinessAfterQuantifier() };
         } else if (b == '+') {
             self.pos += 1;
-            const greedy = if (self.match('?')) self.current_flags.ungreedy else !self.current_flags.ungreedy;
-            rep = .{ .min = 1, .max = null, .greedy = greedy };
+            rep = .{ .min = 1, .max = null, .greedy = self.greedinessAfterQuantifier() };
         } else if (b == '?') {
             self.pos += 1;
-            const greedy = if (self.match('?')) self.current_flags.ungreedy else !self.current_flags.ungreedy;
-            rep = .{ .min = 0, .max = 1, .greedy = greedy };
+            rep = .{ .min = 0, .max = 1, .greedy = self.greedinessAfterQuantifier() };
         } else if (b == '{') {
             rep = try self.parseBraceRepetition();
         }
 
         if (rep) |r| {
+            switch (atom.*) {
+                .anchor, .empty => return self.fail(
+                    error.InvalidQuantifier,
+                    .syntax,
+                    atom_start,
+                    "quantifier cannot be applied to a zero-width assertion or empty group",
+                ),
+                else => {},
+            }
             const alloc = self.arena.allocator();
             const qnode = try alloc.create(Node);
             qnode.* = .{
@@ -222,6 +255,12 @@ pub const Parser = struct {
         }
 
         return atom;
+    }
+
+    fn greedinessAfterQuantifier(self: *Parser) bool {
+        self.skipIgnored();
+        const lazy = self.match('?');
+        return if (lazy) self.current_flags.ungreedy else !self.current_flags.ungreedy;
     }
 
     fn parseBraceRepetition(self: *Parser) Error!Repetition {
@@ -274,7 +313,7 @@ pub const Parser = struct {
             return self.fail(error.InvalidRepetitionRange, .syntax, brace_start, "unclosed repetition brace");
         }
 
-        const greedy = if (self.match('?')) self.current_flags.ungreedy else !self.current_flags.ungreedy;
+        const greedy = self.greedinessAfterQuantifier();
         return Repetition{
             .min = min_val,
             .max = max_val,
@@ -360,7 +399,17 @@ pub const Parser = struct {
         const saved_flags = self.current_flags;
 
         if (self.match('?')) {
-            if (self.match(':')) {
+            if (self.match('#')) {
+                // Comment group (?#...): discarded entirely.
+                while (self.pos < self.pattern.len and self.pattern[self.pos] != ')') : (self.pos += 1) {}
+                if (!self.match(')')) {
+                    return self.fail(error.UnterminatedGroup, .syntax, group_start, "unclosed comment group");
+                }
+                const comment_node = try alloc.create(Node);
+                comment_node.* = .{ .empty = {} };
+                self.current_flags = saved_flags;
+                return comment_node;
+            } else if (self.match(':')) {
                 // Non-capturing group (?:...)
                 is_capturing = false;
             } else if (self.peek() == '=' or self.peek() == '!') {
@@ -385,27 +434,39 @@ pub const Parser = struct {
                     if (raw_name.len == 0) {
                         return self.fail(error.InvalidGroupName, .syntax, name_start, "group name cannot be empty");
                     }
+                    if (!std.ascii.isAlphabetic(raw_name[0]) and raw_name[0] != '_') {
+                        return self.fail(error.InvalidGroupName, .syntax, name_start, "group name must start with a letter or underscore");
+                    }
                     for (raw_name) |c| {
                         if (!std.ascii.isAlphanumeric(c) and c != '_') {
                             return self.fail(error.InvalidGroupName, .syntax, name_start, "group name contains invalid characters");
                         }
                     }
                     group_name = try alloc.dupe(u8, raw_name);
+                } else if (self.peek() == '=') {
+                    return self.fail(error.UnsupportedBackreference, .unsupported, group_start, "named backreferences are unsupported");
                 } else {
                     return self.fail(error.InvalidGroupName, .syntax, group_start, "malformed named group syntax");
                 }
             } else {
-                // Inline flags (?imsU) or flag group (?imsU:...)
+                // Inline flags (?imsUx) or flag group (?imsUx:...)
                 var set_flag = true;
+                var saw_flag = false;
                 while (self.pos < self.pattern.len) {
                     const c = self.peek().?;
                     if (c == ')') {
+                        if (!saw_flag) {
+                            return self.fail(error.UnexpectedCharacter, .syntax, group_start, "empty inline flag group");
+                        }
                         self.pos += 1;
                         // Return empty node for pure flag modifier
                         const empty_node = try alloc.create(Node);
                         empty_node.* = .{ .empty = {} };
                         return empty_node;
                     } else if (c == ':') {
+                        if (!saw_flag) {
+                            return self.fail(error.UnexpectedCharacter, .syntax, group_start, "inline flag group has no flags");
+                        }
                         self.pos += 1;
                         is_capturing = false;
                         break;
@@ -414,15 +475,23 @@ pub const Parser = struct {
                         self.pos += 1;
                     } else if (c == 'i') {
                         self.current_flags.caseless = set_flag;
+                        saw_flag = true;
                         self.pos += 1;
                     } else if (c == 'm') {
                         self.current_flags.multiline = set_flag;
+                        saw_flag = true;
                         self.pos += 1;
                     } else if (c == 's') {
                         self.current_flags.dotAll = set_flag;
+                        saw_flag = true;
                         self.pos += 1;
                     } else if (c == 'U') {
                         self.current_flags.ungreedy = set_flag;
+                        saw_flag = true;
+                        self.pos += 1;
+                    } else if (c == 'x') {
+                        self.current_flags.extended = set_flag;
+                        saw_flag = true;
                         self.pos += 1;
                     } else {
                         return self.fail(error.UnsupportedConstruct, .unsupported, self.pos, "unknown inline flag");
@@ -504,14 +573,52 @@ pub const Parser = struct {
                 const posix_name = self.pattern[posix_start..self.pos];
                 self.pos += 2; // consume ':]'
 
-                if (PosixClass.fromName(posix_name)) |pclass| {
+                var name = posix_name;
+                var posix_negated = false;
+                if (name.len > 0 and name[0] == '^') {
+                    posix_negated = true;
+                    name = name[1..];
+                }
+
+                if (PosixClass.fromName(name)) |pclass| {
                     var bm = Bitmap256.initEmpty();
                     pclass.populateBitmap(&bm);
-                    try appendBitmapRanges(alloc, &bm, &ranges);
+                    if (posix_negated) {
+                        try appendBitmapComplement(alloc, &bm, &ranges, 0x10FFFF);
+                    } else {
+                        try appendBitmapRanges(alloc, &bm, &ranges);
+                    }
                     continue;
                 } else {
                     return self.fail(error.InvalidEscapeSequence, .syntax, posix_start, "unknown POSIX character class name");
                 }
+            }
+
+            if (c == '\\' and self.pos + 1 < self.pattern.len and self.pattern[self.pos + 1] == 'Q') {
+                // \Q...\E inside a bracket expression: every character up to
+                // \E is literal, including '-' and ']'.
+                self.pos += 2;
+                while (self.pos < self.pattern.len) {
+                    if (self.pattern[self.pos] == '\\' and self.pos + 1 < self.pattern.len and self.pattern[self.pos + 1] == 'E') {
+                        self.pos += 2;
+                        break;
+                    }
+                    var cp: u21 = undefined;
+                    if (self.pattern[self.pos] >= 0x80) {
+                        if (unicode_mod.decodeUtf8Char(self.pattern[self.pos..])) |dec| {
+                            cp = dec.cp;
+                            self.pos += dec.len;
+                        } else {
+                            cp = self.pattern[self.pos];
+                            self.pos += 1;
+                        }
+                    } else {
+                        cp = self.pattern[self.pos];
+                        self.pos += 1;
+                    }
+                    try ranges.append(alloc, .{ .min = cp, .max = cp });
+                }
+                continue;
             }
 
             if (c == '\\' and self.pos + 1 < self.pattern.len) {
@@ -604,6 +711,30 @@ pub const Parser = struct {
                 .min = @intCast(start),
                 .max = @intCast(b - 1),
             });
+        }
+    }
+
+    fn appendBitmapComplement(
+        alloc: std.mem.Allocator,
+        bitmap: *const Bitmap256,
+        ranges: *std.ArrayList(Range),
+        max_cp: u21,
+    ) Error!void {
+        var b: usize = 0;
+        while (b < 256) {
+            if (bitmap.isSet(@intCast(b))) {
+                b += 1;
+                continue;
+            }
+            const start = b;
+            while (b < 256 and !bitmap.isSet(@intCast(b))) : (b += 1) {}
+            try ranges.append(alloc, .{
+                .min = @intCast(start),
+                .max = @intCast(b - 1),
+            });
+        }
+        if (max_cp > 255) {
+            try ranges.append(alloc, .{ .min = 256, .max = max_cp });
         }
     }
 
@@ -708,11 +839,51 @@ pub const Parser = struct {
                 'r' => return '\r',
                 't' => return '\t',
                 'v' => return 0x0B,
-                '0' => return 0,
+                '0' => {
+                    var value: u32 = 0;
+                    var digits: usize = 0;
+                    while (digits < 2 and self.pos < self.pattern.len) : (digits += 1) {
+                        const d = self.pattern[self.pos];
+                        if (d < '0' or d > '7') break;
+                        value = (value << 3) | (d - '0');
+                        self.pos += 1;
+                    }
+                    return @intCast(value);
+                },
+                'c' => {
+                    if (self.pos >= self.pattern.len) {
+                        return self.fail(error.InvalidEscapeSequence, .syntax, self.pos - 2, "incomplete control escape");
+                    }
+                    const ctrl_char = self.advance().?;
+                    if (ctrl_char < 0x40 or ctrl_char > 0x7E) {
+                        return self.fail(error.InvalidEscapeSequence, .syntax, self.pos - 3, "control escape requires an ASCII character");
+                    }
+                    return std.ascii.toUpper(ctrl_char) & 0x1F;
+                },
+                'o' => {
+                    if (self.peek() == '{') {
+                        return self.parseBracedOctalCodepoint();
+                    }
+                    return 'o';
+                },
                 '\\', '-', '[', ']', '^' => return esc,
-                'x' => return self.parseHexEscape(),
-                'u' => return self.parseUnicodeEscape(),
-                else => return esc,
+                'x' => {
+                    if (self.peek() == '{') return self.parseBracedHexCodepoint();
+                    return self.parseHexEscape();
+                },
+                'u' => {
+                    return self.parseUnicodeCodepoint(self.pos - 2);
+                },
+                else => {
+                    if (esc >= 0x80) {
+                        const char_start = self.pos - 1;
+                        if (unicode_mod.decodeUtf8Char(self.pattern[char_start..])) |dec| {
+                            self.pos = char_start + dec.len;
+                            return dec.cp;
+                        }
+                    }
+                    return esc;
+                },
             }
         }
 
@@ -761,12 +932,115 @@ pub const Parser = struct {
             if (count == 0) {
                 return self.fail(error.InvalidEscapeSequence, .syntax, start, "empty unicode escape");
             }
-            if (val > 0x10FFFF) {
+            if (val > 0x10FFFF or (val >= 0xD800 and val <= 0xDFFF)) {
                 return self.fail(error.InvalidEscapeSequence, .syntax, start, "unicode codepoint out of bounds");
             }
             return @intCast(val);
         }
+
+        // Four-digit form \uHHHH (UTF-16 style; surrogate pairs are combined by
+        // the caller before scalar validation).
+        if (self.pos + 4 <= self.pattern.len) {
+            var val: u32 = 0;
+            for (self.pattern[self.pos .. self.pos + 4]) |h| {
+                if (!std.ascii.isHex(h)) {
+                    return self.fail(error.InvalidEscapeSequence, .syntax, self.pos - 2, "invalid hex digit in unicode escape");
+                }
+                val = (val << 4) | (std.fmt.charToDigit(h, 16) catch unreachable);
+            }
+            self.pos += 4;
+            return @intCast(val);
+        }
         return self.fail(error.InvalidEscapeSequence, .syntax, self.pos - 2, "invalid unicode escape format");
+    }
+
+    /// Parse a `\u` escape, combining a UTF-16 surrogate pair written as
+    /// `\uD83D\uDE00` into a single scalar value.
+    fn parseUnicodeCodepoint(self: *Parser, esc_start: usize) Error!u21 {
+        const val = try self.parseUnicodeEscape();
+        if (val >= 0xD800 and val <= 0xDBFF) {
+            if (self.pos + 6 <= self.pattern.len and
+                self.pattern[self.pos] == '\\' and self.pattern[self.pos + 1] == 'u')
+            {
+                var low: u32 = 0;
+                var valid = true;
+                for (self.pattern[self.pos + 2 .. self.pos + 6]) |h| {
+                    if (!std.ascii.isHex(h)) {
+                        valid = false;
+                        break;
+                    }
+                    low = (low << 4) | (std.fmt.charToDigit(h, 16) catch 0);
+                }
+                if (!valid or low < 0xDC00 or low > 0xDFFF) {
+                    return self.fail(error.InvalidEscapeSequence, .syntax, esc_start, "unpaired high surrogate in unicode escape");
+                }
+                self.pos += 6;
+                return @intCast(0x10000 + ((val - 0xD800) << 10) + (low - 0xDC00));
+            }
+            return self.fail(error.InvalidEscapeSequence, .syntax, esc_start, "unpaired high surrogate in unicode escape");
+        }
+        if (val >= 0xDC00 and val <= 0xDFFF) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, esc_start, "unpaired low surrogate in unicode escape");
+        }
+        return val;
+    }
+
+    fn parseBracedHexCodepoint(self: *Parser) Error!u21 {
+        const start = self.pos;
+        self.pos += 1; // consume '{'
+        var val: u32 = 0;
+        var count: usize = 0;
+        while (self.pos < self.pattern.len and self.pattern[self.pos] != '}') {
+            const c = self.pattern[self.pos];
+            if (!std.ascii.isHex(c)) {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "invalid hex digit in codepoint escape");
+            }
+            val = (val << 4) | (std.fmt.charToDigit(c, 16) catch unreachable);
+            count += 1;
+            self.pos += 1;
+            if (count > 6) {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "codepoint escape exceeds 21 bits");
+            }
+        }
+        if (!self.match('}')) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "unclosed codepoint escape brace");
+        }
+        if (count == 0) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "empty codepoint escape");
+        }
+        if (val > 0x10FFFF or (val >= 0xD800 and val <= 0xDFFF)) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "codepoint escape out of bounds");
+        }
+        return @intCast(val);
+    }
+
+    fn parseBracedOctalCodepoint(self: *Parser) Error!u21 {
+        const start = self.pos;
+        self.pos += 1; // consume '{'
+        var val: u32 = 0;
+        var count: usize = 0;
+        while (self.pos < self.pattern.len and self.pattern[self.pos] != '}') {
+            const c = self.pattern[self.pos];
+            if (c < '0' or c > '7') {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "invalid octal digit in escape");
+            }
+            val = (val << 3) | (c - '0');
+            count += 1;
+            self.pos += 1;
+            if (count > 7) {
+                return self.fail(error.InvalidEscapeSequence, .syntax, start, "octal escape exceeds 21 bits");
+            }
+        }
+        if (!self.match('}')) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "unclosed octal escape brace");
+        }
+        if (count == 0) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "empty octal escape");
+        }
+        if (val > 0x10FFFF or (val >= 0xD800 and val <= 0xDFFF)) {
+            return self.fail(error.InvalidEscapeSequence, .syntax, start, "octal escape out of bounds");
+        }
+        return @intCast(val);
     }
 
     fn parseEscape(self: *Parser) Error!*Node {
@@ -789,6 +1063,11 @@ pub const Parser = struct {
             'z' => {
                 const node = try alloc.create(Node);
                 node.* = .{ .anchor = .end_text };
+                return node;
+            },
+            'Z' => {
+                const node = try alloc.create(Node);
+                node.* = .{ .anchor = .end_text_newline };
                 return node;
             },
             'b' => {
@@ -817,6 +1096,10 @@ pub const Parser = struct {
             },
             // Hex / Unicode escapes
             'x' => {
+                if (self.peek() == '{') {
+                    const val = try self.parseBracedHexCodepoint();
+                    return self.makeCodepointClass(val);
+                }
                 const val = try self.parseHexEscape();
                 const node = try alloc.create(Node);
                 node.* = .{ .byte_range = .{
@@ -827,25 +1110,64 @@ pub const Parser = struct {
                 return node;
             },
             'u' => {
-                const val = try self.parseUnicodeEscape();
-                if (val <= 255) {
-                    const node = try alloc.create(Node);
-                    node.* = .{ .byte_range = .{
-                        .min = @intCast(val),
-                        .max = @intCast(val),
-                        .caseless = self.current_flags.caseless,
-                    } };
-                    return node;
-                } else {
-                    var ranges = [_]Range{.{ .min = val, .max = val }};
-                    var cc = try CharClass.init(alloc, &ranges, false);
-                    cc.caseless = self.current_flags.caseless;
-                    const node = try alloc.create(Node);
-                    node.* = .{ .char_class = cc };
-                    return node;
+                return self.makeCodepointClass(try self.parseUnicodeCodepoint(esc_start));
+            },
+            // Octal escapes
+            'o' => {
+                if (self.peek() == '{') {
+                    const val = try self.parseBracedOctalCodepoint();
+                    return self.makeCodepointClass(val);
                 }
+                return self.makeLiteralByte('o');
+            },
+            // Quote metacharacters: \Q ... \E
+            'Q' => {
+                const quote_start = self.pos;
+                while (self.pos + 1 < self.pattern.len) {
+                    if (self.pattern[self.pos] == '\\' and self.pattern[self.pos + 1] == 'E') {
+                        const quoted = try alloc.dupe(u8, self.pattern[quote_start..self.pos]);
+                        self.pos += 2;
+                        return self.makeLiteralSlice(quoted);
+                    }
+                    self.pos += 1;
+                }
+                const quoted = try alloc.dupe(u8, self.pattern[quote_start..self.pattern.len]);
+                self.pos = self.pattern.len;
+                return self.makeLiteralSlice(quoted);
+            },
+            'E' => {
+                const node = try alloc.create(Node);
+                node.* = .{ .empty = {} };
+                return node;
+            },
+            // Control escape \cX
+            'c' => {
+                if (self.pos >= self.pattern.len) {
+                    return self.fail(error.InvalidEscapeSequence, .syntax, esc_start, "incomplete control escape");
+                }
+                const ctrl_char = self.advance().?;
+                if (ctrl_char < 0x40 or ctrl_char > 0x7E) {
+                    return self.fail(error.InvalidEscapeSequence, .syntax, esc_start, "control escape requires an ASCII character");
+                }
+                const value = std.ascii.toUpper(ctrl_char) & 0x1F;
+                return self.makeLiteralByte(value);
+            },
+            'G' => {
+                return self.fail(error.UnsupportedConstruct, .unsupported, esc_start, "\\G (sticky start-of-match) is unsupported");
             },
             // Control escapes
+            '0' => {
+                // Octal escape: \0 followed by up to two octal digits.
+                var value: u32 = 0;
+                var digits: usize = 0;
+                while (digits < 2 and self.pos < self.pattern.len) : (digits += 1) {
+                    const d = self.pattern[self.pos];
+                    if (d < '0' or d > '7') break;
+                    value = (value << 3) | (d - '0');
+                    self.pos += 1;
+                }
+                return self.makeLiteralByte(@intCast(value));
+            },
             'a' => return self.makeLiteralByte(0x07),
             'e' => return self.makeLiteralByte(0x1B),
             'f' => return self.makeLiteralByte(0x0C),
@@ -853,10 +1175,38 @@ pub const Parser = struct {
             'r' => return self.makeLiteralByte('\r'),
             't' => return self.makeLiteralByte('\t'),
             'v' => return self.makeLiteralByte(0x0B),
-            '0' => return self.makeLiteralByte(0),
             // Escaped metacharacters & literals
-            else => return self.makeLiteralByte(c),
+            else => {
+                if (c >= 0x80) {
+                    const char_start = self.pos - 1;
+                    if (unicode_mod.decodeUtf8Char(self.pattern[char_start..])) |dec| {
+                        self.pos = char_start + dec.len;
+                        return self.makeLiteralSlice(self.pattern[char_start..self.pos]);
+                    }
+                }
+                return self.makeLiteralByte(c);
+            },
         }
+    }
+
+    fn makeLiteralSlice(self: *Parser, bytes: []const u8) Error!*Node {
+        const alloc = self.arena.allocator();
+        const node = try alloc.create(Node);
+        node.* = .{ .literal = .{
+            .bytes = bytes,
+            .caseless = self.current_flags.caseless,
+        } };
+        return node;
+    }
+
+    fn makeCodepointClass(self: *Parser, cp: u21) Error!*Node {
+        const alloc = self.arena.allocator();
+        var ranges = [_]Range{.{ .min = cp, .max = cp }};
+        var cc = try CharClass.init(alloc, &ranges, false);
+        cc.caseless = self.current_flags.caseless;
+        const node = try alloc.create(Node);
+        node.* = .{ .char_class = cc };
+        return node;
     }
 
     fn makeLiteralByte(self: *Parser, b: u8) Error!*Node {

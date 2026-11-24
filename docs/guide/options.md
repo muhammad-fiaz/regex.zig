@@ -32,6 +32,10 @@ pub const CompileOptions = struct {
     /// ASCII. By default these are Unicode-aware.
     ascii: bool = false,
 
+    /// Extended (verbose) mode ('x' flag): ignore unescaped whitespace and
+    /// '#' line comments between tokens.
+    extended: bool = false,
+
     /// Safety and memory resource limits.
     limits: Limits = .{},
 };

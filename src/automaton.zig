@@ -47,6 +47,7 @@ pub const Opcode = enum(u8) {
 pub const EmptyWidthType = enum(u8) {
     start_text,
     end_text,
+    end_text_newline,
     start_line,
     end_line,
     word_boundary,

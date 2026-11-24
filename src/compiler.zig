@@ -212,7 +212,10 @@ pub const Compiler = struct {
                     };
                 }
 
-                // Caseless matching: UTF-8 aware
+                // Caseless matching: UTF-8 aware, using full simple-fold
+                // equivalence classes. ASCII keeps the compact one-instruction
+                // form; non-ASCII codepoints compile an exact-byte alternation
+                // over every folding peer.
                 var frags: std.ArrayList(Frag) = .empty;
                 defer frags.deinit(self.allocator);
 
@@ -226,34 +229,7 @@ pub const Compiler = struct {
                         continue;
                     };
                     off += dec.len;
-
-                    if (dec.cp < 128) {
-                        const inst = try self.addInst(.{ .op = .byte, .flags = 1, .data = @intCast(dec.cp) });
-                        try frags.append(self.allocator, .{ .start = inst, .out_patches = try self.makePatch1(inst) });
-                    } else if (unicode_mod.toOtherCase(dec.cp)) |other_cp| {
-                        var b1: [4]u8 = undefined;
-                        const l1 = std.unicode.utf8Encode(dec.cp, &b1) catch 1;
-                        var b2: [4]u8 = undefined;
-                        const l2 = std.unicode.utf8Encode(other_cp, &b2) catch 1;
-
-                        const f1 = try self.compileByteSlice(b1[0..l1]);
-                        const f2 = try self.compileByteSlice(b2[0..l2]);
-
-                        const alt_inst = try self.addInst(.{ .op = .alt });
-                        self.insts.items[alt_inst].out1 = f1.start;
-                        self.insts.items[alt_inst].out2 = f2.start;
-
-                        const combined = try self.appendPatches(f1.out_patches, f2.out_patches);
-                        self.freePatches(f1.out_patches);
-                        self.freePatches(f2.out_patches);
-
-                        try frags.append(self.allocator, .{ .start = alt_inst, .out_patches = combined });
-                    } else {
-                        var b1: [4]u8 = undefined;
-                        const l1 = std.unicode.utf8Encode(dec.cp, &b1) catch 1;
-                        const f = try self.compileByteSlice(b1[0..l1]);
-                        try frags.append(self.allocator, f);
-                    }
+                    try frags.append(self.allocator, try self.compileCaselessChar(dec.cp));
                 }
 
                 var res = frags.items[0];
@@ -308,6 +284,7 @@ pub const Compiler = struct {
                 const empty_type: EmptyWidthType = switch (anc) {
                     .start_text => .start_text,
                     .end_text => .end_text,
+                    .end_text_newline => .end_text_newline,
                     .start_line => .start_line,
                     .end_line => .end_line,
                     .word_boundary => .word_boundary,
@@ -527,17 +504,27 @@ pub const Compiler = struct {
         return res;
     }
 
+    /// True when every byte in `bytes` is ASCII and its case-fold class stays
+    /// within ASCII, so the SIMD literal prefilter is exact.
+    fn caselessAsciiSafe(bytes: []const u8) bool {
+        for (bytes) |b| {
+            if (b > 127) return false;
+            if (unicode_mod.caselessEquivalents(b)) |peers| {
+                for (peers) |peer| {
+                    if (peer >= 128) return false;
+                }
+            }
+        }
+        return true;
+    }
+
     /// Returns the uniform case-insensitivity flag when `node` is a pure literal
     /// chain that can be searched directly, or null when the NFA must be run.
     /// Capturing groups always disqualify the shortcut so submatches survive.
     fn pureLiteralCaseless(self: *const Compiler, node: *const Node) ?bool {
         switch (node.*) {
             .literal => |lit| {
-                if (lit.caseless) {
-                    for (lit.bytes) |b| {
-                        if (b > 127) return null;
-                    }
-                }
+                if (lit.caseless and !caselessAsciiSafe(lit.bytes)) return null;
                 return lit.caseless;
             },
             .concat => |children| {
@@ -559,6 +546,65 @@ pub const Compiler = struct {
             },
             else => return null,
         }
+    }
+
+    /// Compile one codepoint for case-insensitive matching. ASCII uses a single
+    /// folded byte instruction; non-ASCII expands to an alternation over every
+    /// static simple-case-fold peer so pairs such as ß/ẞ and σ/ς/Σ work.
+    fn compileCaselessChar(self: *Compiler, cp: u21) Error!Frag {
+        if (cp < 128) {
+            // Most ASCII letters fold only among ASCII and can use the compact
+            // single-byte instruction. A few (k/K and s/S) also fold to
+            // non-ASCII peers and need the full alternation below.
+            if (unicode_mod.caselessEquivalents(cp)) |peers| {
+                var needs_unicode = false;
+                for (peers) |peer| {
+                    if (peer >= 128) {
+                        needs_unicode = true;
+                        break;
+                    }
+                }
+                if (!needs_unicode) {
+                    const inst = try self.addInst(.{ .op = .byte, .flags = 1, .data = @intCast(cp) });
+                    return .{ .start = inst, .out_patches = try self.makePatch1(inst) };
+                }
+            } else {
+                const inst = try self.addInst(.{ .op = .byte, .flags = 1, .data = @intCast(cp) });
+                return .{ .start = inst, .out_patches = try self.makePatch1(inst) };
+            }
+        }
+
+        const equivalents = unicode_mod.caselessEquivalents(cp);
+        if (equivalents == null or equivalents.?.len <= 1) {
+            return self.compileCodepointExact(cp);
+        }
+
+        var frags: std.ArrayList(Frag) = .empty;
+        defer frags.deinit(self.allocator);
+        for (equivalents.?) |peer| {
+            try frags.append(self.allocator, try self.compileCodepointExact(peer));
+        }
+
+        var res = frags.items[0];
+        var k: usize = 1;
+        while (k < frags.items.len) : (k += 1) {
+            const next_frag = frags.items[k];
+            const alt_inst = try self.addInst(.{ .op = .alt });
+            self.insts.items[alt_inst].out1 = res.start;
+            self.insts.items[alt_inst].out2 = next_frag.start;
+
+            const combined = try self.appendPatches(res.out_patches, next_frag.out_patches);
+            self.freePatches(res.out_patches);
+            self.freePatches(next_frag.out_patches);
+            res = .{ .start = alt_inst, .out_patches = combined };
+        }
+        return res;
+    }
+
+    fn compileCodepointExact(self: *Compiler, cp: u21) Error!Frag {
+        var buf: [4]u8 = undefined;
+        const len = std.unicode.utf8Encode(cp, &buf) catch return error.InvalidEscapeSequence;
+        return self.compileByteSlice(buf[0..len]);
     }
 
     fn compileByteSlice(self: *Compiler, bytes: []const u8) Error!Frag {
@@ -596,10 +642,9 @@ pub const Compiler = struct {
             prefix_caseless.* = lit.caseless;
         }
         if (lit.caseless) {
-            // The ASCII caseless prefilter cannot fold multi-byte codepoints.
-            for (lit.bytes) |b| {
-                if (b > 127) return false;
-            }
+            // The ASCII caseless prefilter cannot fold multi-byte codepoints or
+            // ASCII letters with non-ASCII fold peers such as k/K → U+212A.
+            if (!caselessAsciiSafe(lit.bytes)) return false;
         }
         try prefix_list.appendSlice(self.allocator, lit.bytes);
         return true;
@@ -629,9 +674,9 @@ pub const Compiler = struct {
             .concat => |children| {
                 for (children) |c| {
                     const cont = try self.extractPrefixFromNode(c, prefix_list, prefix_caseless);
-                    if (!cont) break;
+                    if (!cont) return false;
                 }
-                return false;
+                return true;
             },
             else => return false,
         }

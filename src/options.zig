@@ -43,6 +43,11 @@ pub const CompileOptions = struct {
     /// character classes, or \p{…} property classes.
     ascii: bool = false,
 
+    /// Extended (verbose) mode ('x' flag): ignores unescaped ASCII whitespace
+    /// and `#` line comments between tokens. Whitespace inside bracket
+    /// expressions and inside `\Q…\E` quotes remains significant.
+    extended: bool = false,
+
     /// Safety and memory resource limits.
     limits: Limits = .{},
 };
@@ -57,7 +62,8 @@ pub const CompileFlags = packed struct {
     dotAll: bool = false,
     ungreedy: bool = false,
     ascii: bool = false,
-    _padding: u3 = 0,
+    extended: bool = false,
+    _padding: u2 = 0,
 
     pub fn fromCompileOptions(opts: CompileOptions) CompileFlags {
         return .{
@@ -66,6 +72,7 @@ pub const CompileFlags = packed struct {
             .dotAll = opts.dotAll,
             .ungreedy = opts.ungreedy,
             .ascii = opts.ascii,
+            .extended = opts.extended,
         };
     }
 };

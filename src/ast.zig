@@ -7,6 +7,7 @@ const CharClass = charset.CharClass;
 pub const AnchorType = enum {
     start_text, // \A or ^ (when not multiline)
     end_text, // \z or $ (when not multiline)
+    end_text_newline, // \Z: end of text, or just before a final newline
     start_line, // ^ in multiline mode
     end_line, // $ in multiline mode
     word_boundary, // \b

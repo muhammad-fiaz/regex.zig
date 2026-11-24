@@ -716,13 +716,14 @@ pub const Engine = struct {
         switch (ew_type) {
             .start_text => return p == 0,
             .end_text => return p == input.len,
+            .end_text_newline => return p == input.len or (p + 1 == input.len and input[p] == '\n'),
             .start_line => {
                 if (p == 0) return true;
                 return input[p - 1] == '\n';
             },
             .end_line => {
                 if (p == input.len) return true;
-                return input[p] == '\n' or (input[p] == '\r' and p + 1 < input.len and input[p + 1] == '\n');
+                return input[p] == '\n';
             },
             .word_boundary, .non_word_boundary => {
                 // Boundaries are character-level; ignore positions inside a

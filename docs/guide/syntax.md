@@ -20,9 +20,23 @@ The following metacharacters have special syntactic meaning and must be escaped 
 
 Use `regex.escape(allocator, raw_str)` or `regex.escapeBuffer(&buf, raw_str)` to programmatically escape user input.
 
-Supported escapes include `\n`, `\r`, `\t`, `\f`, `\v`, `\a`, `\e`, `\0`,
-`\xHH` (byte value), and `\u{HHHHHH}` (Unicode codepoint up to `0x10FFFF`).
-Escaped metacharacters such as `\.` or `\[` match their literal character.
+Supported escapes include:
+
+| Escape | Meaning |
+| :--- | :--- |
+| `\n`, `\r`, `\t`, `\f`, `\v`, `\a`, `\e` | Newline, carriage return, tab, form feed, vertical tab, bell, escape. |
+| `\xHH` | Byte or codepoint from exactly two hex digits (`\x41`). |
+| `\x{H…}` | Any Unicode codepoint up to `0x10FFFF` (`\x{1F600}`). |
+| `\uHHHH` | Unicode codepoint from four hex digits. UTF-16 surrogate pairs (`\uD83D\uDE00`) are combined into one codepoint. |
+| `\u{H…}` | Any Unicode codepoint up to `0x10FFFF` (`\u{1F600}`). |
+| `\0nn` | Octal byte value using up to two digits after `\0` (`\012`). |
+| `\o{H…}` | Octal codepoint (`\o{101}` is `A`). |
+| `\cX` | ASCII control character (`\cA` is `0x01`). |
+| `\Q…\E` | Quotes everything between the markers so metacharacters are literal. |
+
+Escaped metacharacters such as `\.` or `\[` match their literal character, and a
+backslash followed by a non-ASCII character decodes the full UTF-8 codepoint
+(`\é` matches `é`).
 
 ---
 
@@ -111,9 +125,10 @@ Quantifiers define how many times the preceding atom may match:
 ## Anchors & Zero-Width Assertions
 
 - `^`: Beginning of line (in multiline mode) or beginning of text.
-- `$`: End of line (in multiline mode) or end of text.
+- `$`: End of line (in multiline mode, immediately before `\n`) or end of text.
 - `\A`: Absolute beginning of input string.
 - `\z`: Absolute end of input string.
+- `\Z`: End of input string, or just before a single trailing newline.
 - `\b`: Word boundary (`\w` adjacent to `\W` or string bounds). Unicode-aware by
   default; ASCII when `.ascii = true`.
 - `\B`: Non-word boundary.
@@ -124,12 +139,30 @@ Quantifiers define how many times the preceding atom may match:
 
 - `(expr)`: Numbered capturing group. Submatch offsets are recorded into capture slots `$1`, `$2`, etc. Up to 31 capturing groups are addressable (32 inline slots including the full match).
 - `(?:expr)`: Non-capturing group. Groups sub-expressions without consuming capture slot indices.
+- `(?#comment)`: Comment group, discarded by the parser.
 - `(?P<name>expr)` / `(?<name>expr)`: Named capturing group. Retrieve matched slice by identifier with `caps.name("name")`.
 - `(?i)` / `(?-i)`: Inline case-insensitive flag toggles.
 - `(?m)` / `(?-m)`: Inline multiline flag toggles.
 - `(?s)` / `(?-s)`: Inline dot-all flag toggles.
 - `(?U)` / `(?-U)`: Inline ungreedy flag toggles.
+- `(?x)` / `(?-x)`: Inline extended (verbose) flag toggles.
 - `(?i:expr)`: Scoped flag group. Flags apply only inside the group and are restored afterwards.
+
+---
+
+## Extended (Verbose) Mode
+
+Extended mode ignores unescaped ASCII whitespace and `#` line comments between
+tokens, which lets complex patterns be spread across lines. Enable it with
+`.extended = true` or the `(?x)` flag. Whitespace inside bracket expressions and
+inside `\Q…\E` quotes stays significant, and `\ ` / `\#` match a literal space or
+hash.
+
+```zig
+// Both patterns match "abc".
+const a = try regex.compile(allocator, "(?x) a b # trailing comment\n c", .{});
+const b = try regex.compile(allocator, "abc", .{ .extended = true });
+```
 
 ---
 
@@ -139,3 +172,5 @@ To guarantee **linear-time execution** and prevent arbitrary computational compl
 
 - **Backreferences** (e.g. `\1`, `\2`, `\k<name>`): Backreferences transform pattern matching into an NP-complete problem.
 - **Lookaround Assertions** (e.g. `(?=...)`, `(?!...)`, `(?<=...)`, `(?<!...)`): Lookahead and lookbehind assertions complicate non-backtracking NFA engines.
+- **Possessive Quantifiers** (e.g. `a*+`, `{1,3}+`): Not part of the supported dialect; atomic grouping is likewise unavailable.
+- **Sticky Start** (`\G`): Reported as `error.UnsupportedConstruct`.

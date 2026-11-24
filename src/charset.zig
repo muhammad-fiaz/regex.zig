@@ -120,6 +120,16 @@ pub const CharClass = struct {
         if (!matched and self.caseless) {
             matched = self.ascii_bitmap.isSet(std.ascii.toLower(byte)) or
                 self.ascii_bitmap.isSet(std.ascii.toUpper(byte));
+            if (!matched and self.has_non_ascii) {
+                if (ucd.caselessEquivalents(byte)) |equivalents| {
+                    for (equivalents) |peer| {
+                        if (peer >= 128 and self.matchesRaw(peer)) {
+                            matched = true;
+                            break;
+                        }
+                    }
+                }
+            }
         }
         return if (self.is_negated) !matched else matched;
     }

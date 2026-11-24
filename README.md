@@ -79,7 +79,8 @@
 | **Named Captures** | Full support for Perl-compatible named groups `(?P<name>...)` and `(?<name>...)` accessible by identifier with `caps.name("name")`. |
 | **Literal Prefilters** | Automatic literal prefix extraction with fast substring search that bypasses full NFA simulation when the prefix does not appear in the input. |
 | **Unicode & UTF-8** | Dot and character classes consume complete UTF-8 characters; Unicode codepoint ranges (`[é-ê]`, `[\u{3040}-\u{309F}]`); Unicode-aware shorthands (`\d`, `\w`, `\s`) and word boundaries with an `ascii` toggle; Unicode property classes (`\p{L}`, `\p{Nd}`, `\P{…}`); POSIX bracket classes; scoped inline flags (`(?i)`, `(?i:...)`, `(?-s)`); and full Unicode simple case folding. |
-| **Replacement Subsystem** | Fast template expansion replacing the first match (`replace`) or all matches (`replaceAll`) with numbered `$1` and named `${name}` backreferences. |
+| **Extended Escapes & Verbose Mode** | `\x{…}`, 4-digit `\uHHHH` with surrogate-pair combining, `\o{…}`, `\0nn` octal, `\cX` control escapes, `\Q…\E` quoting, `(?#…)` comments, `\Z`, and whitespace/comment-skipping extended mode (`(?x)` or `.extended = true`). |
+| **Replacement Subsystem** | Fast template expansion replacing the first match (`replace`) or all matches (`replaceAll`) with numbered (`$1`, `${1}`), named (`${name}`), full-match (`$&`) and surrounding-text (`` $` ``, `$'`) references. |
 | **Splitting & Delimiters** | Splits text across regular expression delimiters with configurable maximum split counts and zero memory leaks. |
 | **Safe Streaming Iterators** | Forward stream iteration (`iterator`, `capturesIterator`) that safely progresses past zero-length matches (such as `\b`) without getting stuck in infinite loops. |
 | **Zero Runtime Allocations** | Boolean matching, leftmost-first finding, and capture extraction execute entirely inside a pre-calculated, reusable thread scratch buffer with zero heap allocations during matching. |

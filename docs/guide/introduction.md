@@ -32,7 +32,8 @@ It provides everything needed to build fast, secure, and reliable text-processin
 | **Submatch & Named Captures** | Extract 32 inline capture slots (full match + 31 groups) with zero heap allocations during search, plus named groups `(?P&lt;name&gt;...)` and `(?&lt;name&gt;...)`. |
 | **Literal Prefilter Acceleration** | Automatically extracts literal prefixes from patterns to perform fast substring searches, skipping NFA execution when the prefix does not match. |
 | **Unicode & UTF-8 Support** | Dot and character classes consume complete UTF-8 characters, Unicode codepoint ranges, Unicode-aware shorthands (`\d`, `\w`, `\s`) with an `ascii` toggle, Unicode property classes (`\p{L}`, `\p{Nd}`), POSIX bracket classes (`[:alnum:]`), scoped inline flags, and full Unicode simple case folding. |
-| **Replacement Subsystem** | Replace first or all matches with template expansion supporting numbered groups (`$0`, `$1`) and named groups (`${name}`). |
+| **Extended Escapes & Verbose Mode** | `\x{…}`, `\uHHHH` (including surrogate pairs), `\o{…}`, octal, `\cX`, `\Q…\E`, `(?#…)` comments, `\Z`, and extended mode via `(?x)` or `.extended`. |
+| **Replacement Subsystem** | Replace first or all matches with template expansion supporting numbered groups (`$0`, `$1`, `${1}`), named groups (`${name}`), `$&`, `` $` ``, and `$'`. |
 | **Splitting & Tokenization** | Split input strings across arbitrary regular expression delimiters into allocated slices. |
 | **Safe Streaming Iterators** | Advance past zero-length matches safely without entering infinite loops. |
 | **Hardened Safety Limits** | Configurable limits (`Limits`) for pattern length, parenthesis nesting depth, repetition bounds, and bytecode instruction budgets. |
